@@ -1,11 +1,19 @@
 "use server";
 
+import { chatCompletion, extractJson } from "@/lib/llm";
 import { SYSTEM_PROMPT, getInterviewAnalyticsPrompt } from "@/lib/prompts/analytics";
 import { InterviewService } from "@/services/interviews.service";
 import { ResponseService } from "@/services/responses.service";
 import type { Question } from "@/types/interview";
 import type { Analytics } from "@/types/response";
-import { OpenAI } from "openai";
+
+/**
+ * 面试评分分析（原版调 OpenAI gpt-4o，现走平台 LLM）。
+ *
+ * 评分逐字稿通常比出题长得多，且 deepseek-v4 / glm-5 的 `reasoning_content`（思考过程）
+ * 与正文**共享** max_tokens 预算，所以这里显式给到 8000（默认 4000 恐被思考吃光 → JSON 截断）。
+ */
+const ANALYTICS_MAX_TOKENS = 8000;
 
 export const generateInterviewAnalytics = async (payload: {
   callId: string;
@@ -28,38 +36,22 @@ export const generateInterviewAnalytics = async (payload: {
       .map((q: Question, index: number) => `${index + 1}. ${q.question}`)
       .join("\n");
 
-    const openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-      maxRetries: 5,
-      dangerouslyAllowBrowser: true,
-    });
-
     const prompt = getInterviewAnalyticsPrompt(interviewTranscript, mainInterviewQuestions);
 
-    const baseCompletion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      response_format: { type: "json_object" },
+    const content = await chatCompletion({
+      system: SYSTEM_PROMPT,
+      user: prompt,
+      json: true, // 提示词要求输出 JSON，这里显式声明（平台约束见 lib/llm.ts）
+      maxTokens: ANALYTICS_MAX_TOKENS,
     });
 
-    const basePromptOutput = baseCompletion.choices[0] || {};
-    const content = basePromptOutput.message?.content || "";
-    const analyticsResponse = JSON.parse(content);
+    const analyticsResponse = extractJson<Analytics & { mainInterviewQuestions?: string[] }>(content);
 
     analyticsResponse.mainInterviewQuestions = questions.map((q: Question) => q.question);
 
     return { analytics: analyticsResponse, status: 200 };
   } catch (error) {
-    console.error("Error in OpenAI request:", error);
+    console.error("Error in LLM request:", error);
 
     return { error: "internal server error", status: 500 };
   }

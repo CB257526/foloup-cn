@@ -14,7 +14,7 @@ function LoaderWithText() {
         disableAnimation={true}
       />
       <div className="absolute inset-0 flex items-center justify-center">
-        <span className="text-center text-lg font-medium">Loading</span>
+        <span className="text-center text-lg font-medium">加载中</span>
       </div>
     </div>
   );

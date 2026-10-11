@@ -3,20 +3,21 @@
 import DataTable, { type TableData } from "@/components/dashboard/interview/dataTable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { useInterviewers } from "@/contexts/interviewers.context";
 import { CandidateStatus } from "@/lib/enum";
 import { convertSecondstoMMSS } from "@/lib/utils";
 import type { Interview } from "@/types/interview";
 import type { Interviewer } from "@/types/interviewer";
 import type { Response } from "@/types/response";
 import { PieChart } from "@mui/x-charts/PieChart";
-import { Info, SmileIcon, UserCircleIcon } from "lucide-react";
+import { Info, StarIcon, UserCircleIcon } from "lucide-react";
 import Image from "next/image";
 import React, { useEffect, useState } from "react";
 
 type SummaryProps = {
   responses: Response[];
   interview: Interview | undefined;
+  /** 由服务端页面查出后传入（原版来自 interviewers.context） */
+  interviewers: Interviewer[];
 };
 
 function InfoTooltip({ content }: { content: string }) {
@@ -37,20 +38,24 @@ function InfoTooltip({ content }: { content: string }) {
   );
 }
 
-function SummaryInfo({ responses, interview }: SummaryProps) {
-  const { interviewers } = useInterviewers();
+function SummaryInfo({ responses, interview, interviewers }: SummaryProps) {
   const [interviewer, setInterviewer] = useState<Interviewer>();
   const [totalDuration, setTotalDuration] = useState<number>(0);
-  const [completedInterviews, setCompletedInterviews] = useState<number>(0);
-  const [sentimentCount, setSentimentCount] = useState({
-    positive: 0,
-    negative: 0,
-    neutral: 0,
-  });
-  const [callCompletion, setCallCompletion] = useState({
-    complete: 0,
-    incomplete: 0,
-    partial: 0,
+  /**
+   * 平均综合评分（来自 analytics.overallScore；未评分的记录不计入）。
+   * 原版这里是「面试完成率」，数据来自 Retell 的 agent_task_completion_rating ——
+   * 换掉 Retell 后该字段已不存在，卡片会恒为 0（缺陷 D-7）。改用我们真实拥有的评分数据。
+   */
+  const [avgScore, setAvgScore] = useState<number | null>(null);
+  /**
+   * 评分分布（替代原先依赖 Retell 的「候选人情绪」图 —— 情绪字段同样已不存在）。
+   * 分档：优秀 ≥80 / 良好 60–79 / 待提升 <60 / 未评分。
+   */
+  const [scoreBuckets, setScoreBuckets] = useState({
+    excellent: 0,
+    good: 0,
+    fair: 0,
+    none: 0,
   });
 
   const totalResponses = responses.length;
@@ -67,13 +72,10 @@ function SummaryInfo({ responses, interview }: SummaryProps) {
   const prepareTableData = (responses: Response[]): TableData[] => {
     return responses.map((response) => ({
       call_id: response.call_id,
-      name: response.name || "Anonymous",
+      name: response.name || "匿名",
       overallScore: response.analytics?.overallScore || 0,
       communicationScore: response.analytics?.communication?.score || 0,
-      callSummary:
-        response.analytics?.softSkillSummary ||
-        response.details?.call_analysis?.call_summary ||
-        "No summary available",
+      callSummary: response.analytics?.softSkillSummary || "暂无总结",
     }));
   };
 
@@ -93,20 +95,10 @@ function SummaryInfo({ responses, interview }: SummaryProps) {
       return;
     }
 
-    const sentimentCounter = {
-      positive: 0,
-      negative: 0,
-      neutral: 0,
-    };
-
-    const callCompletionCounter = {
-      complete: 0,
-      incomplete: 0,
-      partial: 0,
-    };
+    const scoreAcc = { sum: 0, count: 0 };
+    const scoreBucketCounter = { excellent: 0, good: 0, fair: 0, none: 0 };
 
     let totalDuration = 0;
-    let completedCount = 0;
 
     const statusCounter = {
       [CandidateStatus.NO_STATUS]: 0,
@@ -116,27 +108,20 @@ function SummaryInfo({ responses, interview }: SummaryProps) {
     };
 
     for (const response of responses) {
-      const sentiment = response.details?.call_analysis?.user_sentiment;
-      if (sentiment === "Positive") {
-        sentimentCounter.positive += 1;
-      } else if (sentiment === "Negative") {
-        sentimentCounter.negative += 1;
-      } else if (sentiment === "Neutral") {
-        sentimentCounter.neutral += 1;
-      }
-
-      const callCompletion = response.details?.call_analysis?.call_completion_rating;
-      if (callCompletion === "Complete") {
-        callCompletionCounter.complete += 1;
-      } else if (callCompletion === "Incomplete") {
-        callCompletionCounter.incomplete += 1;
-      } else if (callCompletion === "Partial") {
-        callCompletionCounter.partial += 1;
-      }
-
-      const agentTaskCompletion = response.details?.call_analysis?.agent_task_completion_rating;
-      if (agentTaskCompletion === "Complete" || agentTaskCompletion === "Partial") {
-        completedCount += 1;
+      // 平均分与评分分布：只用真实存在的 analytics.overallScore（未评分的记入「未评分」档）
+      const score = response.analytics?.overallScore;
+      if (typeof score === "number" && Number.isFinite(score)) {
+        scoreAcc.sum += score;
+        scoreAcc.count += 1;
+        if (score >= 80) {
+          scoreBucketCounter.excellent += 1;
+        } else if (score >= 60) {
+          scoreBucketCounter.good += 1;
+        } else {
+          scoreBucketCounter.fair += 1;
+        }
+      } else {
+        scoreBucketCounter.none += 1;
       }
 
       totalDuration += response.duration;
@@ -145,10 +130,9 @@ function SummaryInfo({ responses, interview }: SummaryProps) {
       }
     }
 
-    setSentimentCount(sentimentCounter);
-    setCallCompletion(callCompletionCounter);
     setTotalDuration(totalDuration);
-    setCompletedInterviews(completedCount);
+    setAvgScore(scoreAcc.count > 0 ? scoreAcc.sum / scoreAcc.count : null);
+    setScoreBuckets(scoreBucketCounter);
     setCandidateStatusCount(statusCounter);
 
     const preparedData = prepareTableData(responses);
@@ -161,14 +145,14 @@ function SummaryInfo({ responses, interview }: SummaryProps) {
         <div className="bg-slate-200 rounded-2xl min-h-[120px] p-2 ">
           <div className="flex flex-row gap-2 justify-between items-center mx-2">
             <div className="flex flex-row gap-2 items-center">
-              <p className="font-semibold my-2">Overall Analysis</p>
+              <p className="font-semibold my-2">整体分析</p>
             </div>
             <p className="text-sm">
-              Interviewer used: <span className="font-medium">{interviewer?.name}</span>
+              使用的面试官：<span className="font-medium">{interviewer?.name}</span>
             </p>
           </div>
           <p className="my-3 ml-2 text-sm">
-            Interview Description: <span className="font-medium">{interview?.description}</span>
+            岗位描述：<span className="font-medium">{interview?.description}</span>
           </p>
           <div className="flex flex-col gap-1 my-2 mt-4 mx-2 p-4 rounded-2xl bg-slate-50 shadow-md">
             <ScrollArea className="h-[250px]">
@@ -179,8 +163,8 @@ function SummaryInfo({ responses, interview }: SummaryProps) {
             <div className="flex flex-col">
               <div className="flex flex-col gap-1 my-2 mt-4 mx-2 p-3 rounded-2xl bg-slate-50 shadow-md max-w-[400px]">
                 <div className="flex flex-row items-center justify-center gap-1 font-semibold mb-1 text-[15px]">
-                  Average Duration
-                  <InfoTooltip content="Average time users took to complete an interview" />
+                  平均时长
+                  <InfoTooltip content="用户完成一次面试的平均用时" />
                 </div>
                 <div className="flex items-center justify-center">
                   <p className="text-2xl font-semibold text-indigo-600 w-fit p-1 px-2 bg-indigo-100 rounded-md">
@@ -190,19 +174,19 @@ function SummaryInfo({ responses, interview }: SummaryProps) {
               </div>
               <div className="flex flex-col items-center justify-center gap-1 mx-2 p-3 rounded-2xl bg-slate-50 shadow-md max-w-[360px]">
                 <div className="flex flex-row gap-1 font-semibold mb-1 text-[15px] mx-auto text-center">
-                  Interview Completion Rate
-                  <InfoTooltip content="Percentage of interviews completed successfully" />
+                  平均综合评分
+                  <InfoTooltip content="所有已评分面试记录的综合评分平均值（满分 100）" />
                 </div>
                 <p className="w-fit text-2xl font-semibold text-indigo-600  p-1 px-2 bg-indigo-100 rounded-md">
-                  {Math.round((completedInterviews / responses.length) * 10000) / 100}%
+                  {avgScore === null ? "暂无评分" : Math.round(avgScore)}
                 </p>
               </div>
             </div>
             <div className="flex flex-col gap-1 my-2 mt-4 mx-2 p-4 rounded-2xl bg-slate-50 shadow-md max-w-[360px]">
               <div className="flex flex-row gap-2 text-[15px] font-bold mb-3 mx-auto">
-                <SmileIcon />
-                Candidate Sentiment
-                <InfoTooltip content="Distribution of user sentiments during interviews" />
+                <StarIcon />
+                评分分布
+                <InfoTooltip content="按综合评分分档：优秀 ≥80 / 良好 60-79 / 待提升 <60 / 未评分" />
               </div>
               <PieChart
                 sx={{
@@ -215,21 +199,27 @@ function SummaryInfo({ responses, interview }: SummaryProps) {
                     data: [
                       {
                         id: 0,
-                        value: sentimentCount.positive,
-                        label: `Positive (${sentimentCount.positive})`,
+                        value: scoreBuckets.excellent,
+                        label: `优秀 (${scoreBuckets.excellent})`,
                         color: "#22c55e",
                       },
                       {
                         id: 1,
-                        value: sentimentCount.neutral,
-                        label: `Neutral (${sentimentCount.neutral})`,
+                        value: scoreBuckets.good,
+                        label: `良好 (${scoreBuckets.good})`,
                         color: "#eab308",
                       },
                       {
                         id: 2,
-                        value: sentimentCount.negative,
-                        label: `Negative (${sentimentCount.negative})`,
+                        value: scoreBuckets.fair,
+                        label: `待提升 (${scoreBuckets.fair})`,
                         color: "#eb4444",
+                      },
+                      {
+                        id: 3,
+                        value: scoreBuckets.none,
+                        label: `未评分 (${scoreBuckets.none})`,
+                        color: "#9ca3af",
                       },
                     ],
                     highlightScope: { faded: "global", highlighted: "item" },
@@ -247,10 +237,10 @@ function SummaryInfo({ responses, interview }: SummaryProps) {
             <div className="flex flex-col gap-1 my-2 mt-4 mx-2 p-4 rounded-2xl bg-slate-50 shadow-md">
               <div className="flex flex-row gap-2 text-[15px] font-bold mx-auto mb-1">
                 <UserCircleIcon />
-                Candidate Status
-                <InfoTooltip content="Breakdown of the candidate selection status" />
+                候选人状态
+                <InfoTooltip content="候选人筛选状态分布" />
               </div>
-              <div className="text-sm text-center mb-1">Total Responses: {totalResponses}</div>
+              <div className="text-sm text-center mb-1">面试记录总数：{totalResponses}</div>
               <PieChart
                 sx={{
                   "& .MuiChartsLegend-series text": {
@@ -263,25 +253,25 @@ function SummaryInfo({ responses, interview }: SummaryProps) {
                       {
                         id: 0,
                         value: candidateStatusCount[CandidateStatus.SELECTED],
-                        label: `Selected (${candidateStatusCount[CandidateStatus.SELECTED]})`,
+                        label: `已选中 (${candidateStatusCount[CandidateStatus.SELECTED]})`,
                         color: "#22c55e",
                       },
                       {
                         id: 1,
                         value: candidateStatusCount[CandidateStatus.POTENTIAL],
-                        label: `Potential (${candidateStatusCount[CandidateStatus.POTENTIAL]})`,
+                        label: `潜力人选 (${candidateStatusCount[CandidateStatus.POTENTIAL]})`,
                         color: "#eab308",
                       },
                       {
                         id: 2,
                         value: candidateStatusCount[CandidateStatus.NOT_SELECTED],
-                        label: `Not Selected (${candidateStatusCount[CandidateStatus.NOT_SELECTED]})`,
+                        label: `未选中 (${candidateStatusCount[CandidateStatus.NOT_SELECTED]})`,
                         color: "#eb4444",
                       },
                       {
                         id: 3,
                         value: candidateStatusCount[CandidateStatus.NO_STATUS],
-                        label: `No Status (${candidateStatusCount[CandidateStatus.NO_STATUS]})`,
+                        label: `待筛选 (${candidateStatusCount[CandidateStatus.NO_STATUS]})`,
                         color: "#9ca3af",
                       },
                     ],
@@ -313,8 +303,8 @@ function SummaryInfo({ responses, interview }: SummaryProps) {
       ) : (
         <div className="w-[85%] h-[60%] flex flex-col items-center justify-center">
           <div className="flex flex-col items-center">
-            <Image src="/no-responses.png" alt="logo" width={270} height={270} />
-            <p className="text-center text-sm mt-0">Please share with your intended respondents</p>
+            <Image src="/No-Responses.png" alt="暂无面试记录" width={270} height={270} />
+            <p className="text-center text-sm mt-0">请分享给目标候选人</p>
           </div>
         </div>
       )}

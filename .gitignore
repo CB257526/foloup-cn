@@ -38,3 +38,6 @@ next-env.d.ts
 .idea/
 
 supabase/.temp/
+
+# SQLite 数据目录（P0 本地数据层）
+/data/

@@ -1,12 +1,11 @@
+import { createInterviewAction } from "@/app/actions/interviews";
 import QuestionCard from "@/components/dashboard/interview/create-popup/questionCard";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useInterviews } from "@/contexts/interviews.context";
 import type { InterviewBase, Question } from "@/types/interview";
-import { useClerk, useOrganization } from "@clerk/nextjs";
-import axios from "axios";
 import { Plus } from "lucide-react";
 import { ChevronLeft } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 
@@ -17,13 +16,11 @@ interface Props {
 }
 
 function QuestionsPopup({ interviewData, setProceed, setOpen }: Props) {
-  const { user } = useClerk();
-  const { organization } = useOrganization();
   const [isClicked, setIsClicked] = useState(false);
 
   const [questions, setQuestions] = useState<Question[]>(interviewData.questions);
   const [description, setDescription] = useState<string>(interviewData.description.trim());
-  const { fetchInterviews } = useInterviews();
+  const router = useRouter();
 
   const endOfListRef = useRef<HTMLDivElement>(null);
   const prevQuestionLengthRef = useRef(questions.length);
@@ -59,29 +56,26 @@ function QuestionsPopup({ interviewData, setProceed, setOpen }: Props) {
 
   const onSave = async () => {
     try {
-      interviewData.user_id = user?.id || "";
-      interviewData.organization_id = organization?.id || "";
-
       interviewData.questions = questions;
       interviewData.description = description;
 
-      // Convert BigInts to strings if necessary
-      const sanitizedInterviewData = {
+      const payload = {
         ...interviewData,
-        interviewer_id: interviewData.interviewer_id.toString(),
-        response_count: interviewData.response_count.toString(),
-        logo_url: organization?.imageUrl || "",
+        interviewer_id: interviewData.interviewer_id ?? null,
+        response_count: 0,
+        question_count: questions.length,
+        time_duration: String(interviewData.time_duration),
+        // 单租户：logo 不再来自 Clerk 组织头像
+        logo_url: "",
       };
 
-      const response = await axios.post("/api/create-interview", {
-        organizationName: organization?.name,
-        interviewData: sanitizedInterviewData,
-      });
+      await createInterviewAction(payload);
       setIsClicked(false);
-      fetchInterviews();
       setOpen(false);
+      router.refresh();
     } catch (error) {
       console.error("Error creating interview:", error);
+      setIsClicked(false);
     }
   };
 
@@ -107,10 +101,10 @@ function QuestionsPopup({ interviewData, setProceed, setOpen }: Props) {
               setProceed(false);
             }}
           />
-          <h1 className="text-2xl font-semibold">Create Interview</h1>
+          <h1 className="text-2xl font-semibold">创建岗位</h1>
         </div>
         <div className="my-3 text-left w-[96%] text-sm">
-          We will be using these questions during the interviews. Please make sure they are ok.
+          面试将使用以下题目，请确认无误。
         </div>
         <ScrollArea className="flex flex-col justify-center items-center w-full mt-3">
           {questions.map((question, index) => (
@@ -137,18 +131,18 @@ function QuestionsPopup({ interviewData, setProceed, setOpen }: Props) {
         )}
       </div>
       <p className="mt-3 mb-1 ml-2 font-medium">
-        Interview Description{" "}
+        岗位描述{" "}
         <span
           style={{ fontSize: "0.7rem", lineHeight: "0.66rem" }}
           className="font-light text-xs italic w-full text-left block"
         >
-          Note: Interviewees will see this description.
+          说明：候选人将看到这段描述。
         </span>
       </p>
       <textarea
         value={description}
         className="h-fit mt-3 mx-2 py-2 border-2 rounded-md px-2 w-full border-gray-400"
-        placeholder="Enter your interview description."
+        placeholder="请输入岗位描述。"
         rows={3}
         onChange={(e) => {
           setDescription(e.target.value);
@@ -171,7 +165,7 @@ function QuestionsPopup({ interviewData, setProceed, setOpen }: Props) {
             onSave();
           }}
         >
-          Save
+          保存
         </Button>
       </div>
     </div>

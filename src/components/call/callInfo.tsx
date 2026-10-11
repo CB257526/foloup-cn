@@ -29,18 +29,25 @@ import type { Analytics, CallData } from "@/types/response";
 import { CircularProgress } from "@nextui-org/react";
 import { ScrollArea } from "@radix-ui/react-scroll-area";
 import axios from "axios";
-import { DownloadIcon, TrashIcon } from "lucide-react";
+import { TrashIcon } from "lucide-react";
 import { ArrowLeft } from "lucide-react";
 import { marked } from "marked";
 import { useRouter } from "next/navigation";
 import React, { useEffect, useState } from "react";
-import ReactAudioPlayer from "react-audio-player";
 import { toast } from "sonner";
 
 type CallProps = {
   call_id: string;
   onDeleteResponse: (deletedCallId: string) => void;
   onCandidateStatusChange: (callId: string, newStatus: string) => void;
+};
+
+/** `CallData.end_reason` 的中文说明 */
+const END_REASON_TEXT: Record<string, string> = {
+  candidate_ended: "候选人主动结束",
+  time_up: "到达面试时长上限",
+  connection_closed: "语音连接中断",
+  error: "通话异常结束",
 };
 
 function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallProps) {
@@ -84,7 +91,7 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
       try {
         const response = await ResponseService.getResponseByCallId(call_id);
         setEmail(response.email);
-        setName(response.name);
+        setName(response.name ?? "");
         setCandidateStatus(response.candidate_status);
         setInterviewId(response.interview_id);
         setTabSwitchCount(response.tab_switch_count);
@@ -101,10 +108,10 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
 
   useEffect(() => {
     const replaceAgentAndUser = (transcript: string, name: string): string => {
-      const agentReplacement = "**AI interviewer:**";
+      const agentReplacement = "**AI 面试官：**";
       const userReplacement = `**${name}:**`;
 
-      // Replace "Agent:" with "AI interviewer:" and "User:" with the variable `${name}:`
+      // 兼容旧记录中的英文角色前缀，展示时统一为中文，避免 HR 在结果页来回切换语言。
       let updatedTranscript = transcript
         .replace(/Agent:/g, agentReplacement)
         .replace(/User:/g, userReplacement);
@@ -134,7 +141,7 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
         onDeleteResponse(call_id);
       }
 
-      toast.success("Response deleted successfully.", {
+      toast.success("面试记录已删除。", {
         position: "bottom-right",
 
         duration: 3000,
@@ -142,7 +149,7 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
     } catch (error) {
       console.error("Error deleting response:", error);
 
-      toast.error("Failed to delete the response.", {
+      toast.error("删除面试记录失败。", {
         position: "bottom-right",
 
         duration: 3000,
@@ -151,7 +158,7 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
   };
 
   return (
-    <div className="h-screen z-[10] mx-2 mb-[100px] overflow-y-scroll">
+    <div className="h-auto min-h-screen z-[10] mx-0 md:mx-2 mb-[100px] overflow-y-auto">
       {isLoading ? (
         <div className="flex flex-col items-center justify-center h-[75%] w-full">
           <LoaderWithText />
@@ -161,7 +168,7 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
           <div className="bg-slate-200 rounded-2xl min-h-[120px] p-4 px-5 y-3">
             <div className="flex flex-col justify-between bt-2">
               {/* <p className="font-semibold my-2 ml-2">
-                Response Analysis and Insights
+                面试记录分析
               </p> */}
               <div>
                 <div className="flex justify-between items-center pb-4 pr-2">
@@ -173,17 +180,17 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
                     }}
                   >
                     <ArrowLeft className="mr-2" />
-                    <p className="text-sm font-semibold">Back to Summary</p>
+                    <p className="text-sm font-semibold">返回岗位概览</p>
                   </button>
                   {tabSwitchCount && tabSwitchCount > 0 && (
                     <p className="text-sm font-semibold text-red-500 bg-red-200 rounded-sm px-2 py-1">
-                      Tab Switching Detected
+                      检测到切屏行为
                     </p>
                   )}
                 </div>
               </div>
               <div className="flex flex-col justify-between gap-3 w-full">
-                <div className="flex flex-row justify-between">
+                <div className="flex flex-col md:flex-row md:justify-between gap-3">
                   <div className="flex flex-row gap-3">
                     <Avatar>
                       <AvatarFallback>{name ? name[0] : "A"}</AvatarFallback>
@@ -193,7 +200,7 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
                       {email && <p className="text-sm px-2">{email}</p>}
                     </div>
                   </div>
-                  <div className="flex flex-row mr-2 items-center gap-3">
+                  <div className="flex flex-row flex-wrap mr-2 items-center gap-3">
                     <Select
                       value={candidateStatus}
                       onValueChange={async (newValue: string) => {
@@ -206,7 +213,7 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
                       }}
                     >
                       <SelectTrigger className="w-[180px]  bg-slate-50 rounded-2xl">
-                        <SelectValue placeholder="Not Selected" />
+                        <SelectValue placeholder="待筛选" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value={CandidateStatus.NO_STATUS}>
@@ -218,19 +225,19 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
                         <SelectItem value={CandidateStatus.NOT_SELECTED}>
                           <div className="flex items-center">
                             <div className="w-3 h-3 bg-red-500 rounded-full mr-2" />
-                            Not Selected
+                            未选中
                           </div>
                         </SelectItem>
                         <SelectItem value={CandidateStatus.POTENTIAL}>
                           <div className="flex items-center">
                             <div className="w-3 h-3 bg-yellow-500 rounded-full mr-2" />
-                            Potential
+                            潜力人选
                           </div>
                         </SelectItem>
                         <SelectItem value={CandidateStatus.SELECTED}>
                           <div className="flex items-center">
                             <div className="w-3 h-3 bg-green-500 rounded-full mr-2" />
-                            Selected
+                            已选中
                           </div>
                         </SelectItem>
                       </SelectContent>
@@ -268,28 +275,14 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
                     </AlertDialog>
                   </div>
                 </div>
-                <div className="flex flex-col mt-3">
-                  <p className="font-semibold">Interview Recording</p>
-                  <div className="flex flex-row gap-3 mt-2">
-                    {call?.recording_url && <ReactAudioPlayer src={call?.recording_url} controls />}
-                    <a
-                      className="my-auto"
-                      href={call?.recording_url}
-                      download=""
-                      aria-label="Download"
-                    >
-                      <DownloadIcon size={20} />
-                    </a>
-                  </div>
-                </div>
               </div>
             </div>
             {/* <div>{call.}</div> */}
           </div>
           <div className="bg-slate-200 rounded-2xl min-h-[120px] p-4 px-5 my-3">
-            <p className="font-semibold my-2">General Summary</p>
+            <p className="font-semibold my-2">综合分析</p>
 
-            <div className="grid grid-cols-3 gap-4 my-2 mt-4 ">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 my-2 mt-4">
               {analytics?.overallScore !== undefined && (
                 <div className="flex flex-col gap-3 text-sm p-4 rounded-2xl bg-slate-50">
                   <div className="flex flex-row gap-2 align-middle">
@@ -305,11 +298,11 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
                       showValueLabel={true}
                       formatOptions={{ signDisplay: "never" }}
                     />
-                    <p className="font-medium my-auto text-xl">Overall Hiring Score</p>
+                    <p className="font-medium my-auto text-xl">综合评分</p>
                   </div>
                   <div className="">
                     <div className="font-medium ">
-                      <span className="font-normal">Feedback: </span>
+                      <span className="font-normal">评价： </span>
                       {analytics?.overallFeedback === undefined ? (
                         <Skeleton className="w-[200px] h-[20px]" />
                       ) : (
@@ -342,11 +335,11 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
                       }
                       formatOptions={{ signDisplay: "never" }}
                     />
-                    <p className="font-medium my-auto text-xl">Communication</p>
+                    <p className="font-medium my-auto text-xl">沟通表达</p>
                   </div>
                   <div className="">
                     <div className="font-medium ">
-                      <span className="font-normal">Feedback: </span>
+                      <span className="font-normal">评价： </span>
                       {analytics?.communication.feedback === undefined ? (
                         <Skeleton className="w-[200px] h-[20px]" />
                       ) : (
@@ -356,48 +349,35 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
                   </div>
                 </div>
               )}
-              <div className="flex flex-col gap-3 text-sm p-4 rounded-2xl bg-slate-50">
-                <div className="flex flex-row gap-2  align-middle">
-                  <p className="my-auto">User Sentiment: </p>
-                  <p className="font-medium my-auto">
-                    {call?.call_analysis?.user_sentiment === undefined ? (
-                      <Skeleton className="w-[200px] h-[20px]" />
-                    ) : (
-                      call?.call_analysis?.user_sentiment
-                    )}
-                  </p>
-
-                  <div
-                    className={`${
-                      call?.call_analysis?.user_sentiment === "Neutral"
-                        ? "text-yellow-500"
-                        : call?.call_analysis?.user_sentiment === "Negative"
-                          ? "text-red-500"
-                          : call?.call_analysis?.user_sentiment === "Positive"
-                            ? "text-green-500"
-                            : "text-transparent"
-                    } text-xl`}
-                  >
-                    ●
-                  </div>
+              {/* 原 Retell 的「候选人情绪 / 通话总结」卡片改成我们自己能测到的过程指标 */}
+              <div className="flex flex-col gap-2 text-sm p-4 rounded-2xl bg-slate-50">
+                <p className="font-semibold">面试过程</p>
+                <div className="font-medium">
+                  <span className="font-normal">时长：</span>
+                  {call?.duration ? `${Math.round(call.duration)} 秒` : "—"}
                 </div>
-                <div className="">
-                  <div className="font-medium  ">
-                    <span className="font-normal">Call Summary: </span>
-                    {call?.call_analysis?.call_summary === undefined ? (
-                      <Skeleton className="w-[200px] h-[20px]" />
-                    ) : (
-                      call?.call_analysis?.call_summary
-                    )}
-                  </div>
+                <div className="font-medium">
+                  <span className="font-normal">打断次数：</span>
+                  {call?.stats?.interruption_count ?? 0}
                 </div>
-                <p className="font-medium ">{call?.call_analysis?.call_completion_rating_reason}</p>
+                <div className="font-medium">
+                  <span className="font-normal">平均响应延迟：</span>
+                  {call?.stats?.latency_avg ? `${call.stats.latency_avg} 秒` : "—"}
+                </div>
+                <div className="font-medium">
+                  <span className="font-normal">结束原因：</span>
+                  {END_REASON_TEXT[call?.end_reason ?? ""] ?? "—"}
+                </div>
+                <div className="font-medium">
+                  <span className="font-normal">录音：</span>
+                  未保存，仅保留逐字稿和评分
+                </div>
               </div>
             </div>
           </div>
           {analytics?.questionSummaries && analytics.questionSummaries.length > 0 && (
             <div className="bg-slate-200 rounded-2xl min-h-[120px] p-4 px-5 my-3">
-              <p className="font-semibold my-2 mb-4">Question Summary</p>
+              <p className="font-semibold my-2 mb-4">逐题分析</p>
               <ScrollArea className="rounded-md h-72 text-sm mt-3 py-3 leading-6 overflow-y-scroll whitespace-pre-line px-2">
                 {analytics?.questionSummaries.map((qs, index) => (
                   <QuestionAnswerCard
@@ -411,7 +391,7 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
             </div>
           )}
           <div className="bg-slate-200 rounded-2xl min-h-[150px] max-h-[500px] p-4 px-5 mb-[150px]">
-            <p className="font-semibold my-2 mb-4">Transcript</p>
+            <p className="font-semibold my-2 mb-4">面试逐字稿</p>
             <ScrollArea className="rounded-2xl text-sm h-96  overflow-y-auto whitespace-pre-line px-2">
               <div
                 className="text-sm p-4 rounded-2xl leading-5 bg-slate-50"

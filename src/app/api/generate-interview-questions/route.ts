@@ -1,38 +1,22 @@
+import { chatCompletion } from "@/lib/llm";
 import { logger } from "@/lib/logger";
 import { SYSTEM_PROMPT, generateQuestionsPrompt } from "@/lib/prompts/generate-questions";
 import { NextResponse } from "next/server";
-import { OpenAI } from "openai";
 
+// 出题要点：平台 LLM 的默认超时是 50s，正好卡在本路由的 60s 上限之内。
+// 实测出题耗时：deepseek-v4.1-flash ≈2.3s / qwen-max ≈3.4s / glm-5 ≈12.6s / deepseek-v4-pro ≈35s。
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
   logger.info("generate-interview-questions request received");
   const body = await req.json();
 
-  const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-    maxRetries: 5,
-    dangerouslyAllowBrowser: true,
-  });
-
   try {
-    const baseCompletion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: generateQuestionsPrompt(body),
-        },
-      ],
-      response_format: { type: "json_object" },
+    const content = await chatCompletion({
+      system: SYSTEM_PROMPT,
+      user: generateQuestionsPrompt(body),
+      json: true, // 提示词要求输出 JSON，这里显式声明（平台约束见 lib/llm.ts）
     });
-
-    const basePromptOutput = baseCompletion.choices[0] || {};
-    const content = basePromptOutput.message?.content;
 
     logger.info("Interview questions generated successfully");
 
@@ -43,7 +27,10 @@ export async function POST(req: Request) {
       { status: 200 },
     );
   } catch (error) {
-    logger.error("Error generating interview questions");
+    logger.error(
+      "Error generating interview questions",
+      error instanceof Error ? error.message : String(error),
+    );
 
     return NextResponse.json({ error: "internal server error" }, { status: 500 });
   }

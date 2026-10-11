@@ -1,34 +1,34 @@
 export const avatars = [
   {
     id: 1,
-    img: "/avatars/1.png",
+    img: "/interviewers/Lisa.png",
   },
   {
     id: 2,
-    img: "/avatars/2.png",
+    img: "/interviewers/Bob.png",
   },
   {
     id: 3,
-    img: "/avatars/3.png",
+    img: "/user-icon.png",
   },
   {
     id: 4,
-    img: "/avatars/4.png",
+    img: "/interviewers/Lisa.png",
   },
   {
     id: 5,
-    img: "/avatars/5.png",
+    img: "/interviewers/Bob.png",
   },
   {
     id: 6,
-    img: "/avatars/6.png",
+    img: "/user-icon.png",
   },
   {
     id: 7,
-    img: "/avatars/7.png",
+    img: "/interviewers/Lisa.png",
   },
   {
     id: 8,
-    img: "/avatars/8.png",
+    img: "/interviewers/Bob.png",
   },
 ];

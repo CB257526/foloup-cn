@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { useInterviewers } from "@/contexts/interviewers.context";
 import type { InterviewBase, Question } from "@/types/interview";
 import type { Interviewer } from "@/types/interviewer";
 import axios from "axios";
@@ -13,6 +12,10 @@ import Image from "next/image";
 import React, { useState, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
 import FileUpload from "../fileUpload";
+import {
+  DEFAULT_INTERVIEW_DURATION_MINUTES,
+  MAX_INTERVIEW_DURATION_MINUTES,
+} from "@/lib/constants";
 
 interface Props {
   open: boolean;
@@ -23,6 +26,7 @@ interface Props {
   setIsUploaded: (isUploaded: boolean) => void;
   fileName: string;
   setFileName: (fileName: string) => void;
+  interviewers: Interviewer[];
 }
 
 function DetailsPopup({
@@ -34,8 +38,8 @@ function DetailsPopup({
   setIsUploaded,
   fileName,
   setFileName,
+  interviewers,
 }: Props) {
-  const { interviewers } = useInterviewers();
   const [isClicked, setIsClicked] = useState(false);
   const [openInterviewerDetails, setOpenInterviewerDetails] = useState(false);
   const [interviewerDetails, setInterviewerDetails] = useState<Interviewer>();
@@ -47,7 +51,9 @@ function DetailsPopup({
   const [numQuestions, setNumQuestions] = useState(
     interviewData.question_count === 0 ? "" : String(interviewData.question_count),
   );
-  const [duration, setDuration] = useState(interviewData.time_duration);
+  const [duration, setDuration] = useState(
+    interviewData.time_duration || String(DEFAULT_INTERVIEW_DURATION_MINUTES),
+  );
   const [uploadedDocumentContext, setUploadedDocumentContext] = useState("");
 
   const slideLeft = (id: string, value: number) => {
@@ -118,7 +124,7 @@ function DetailsPopup({
   useEffect(() => {
     if (!open) {
       setName("");
-      setSelectedInterviewer(BigInt(0));
+      setSelectedInterviewer(0);
       setObjective("");
       setIsAnonymous(false);
       setNumQuestions("");
@@ -129,25 +135,25 @@ function DetailsPopup({
 
   return (
     <>
-      <div className="text-center w-[38rem]">
-        <h1 className="text-xl font-semibold">Create an Interview</h1>
+      <div className="w-full max-w-[38rem] max-h-[90vh] overflow-y-auto px-2 text-center">
+        <h1 className="text-xl font-semibold">创建岗位</h1>
         <div className="flex flex-col justify-center items-start mt-4 ml-10 mr-8">
           <div className="flex flex-row justify-center items-center">
-            <h3 className="text-sm font-medium">Interview Name:</h3>
+            <h3 className="text-sm font-medium">岗位名称：</h3>
             <input
               type="text"
               className="border-b-2 focus:outline-none border-gray-500 px-2 w-96 py-0.5 ml-3"
-              placeholder="e.g. Name of the Interview"
+              placeholder="例如：前端开发工程师面试"
               value={name}
               onChange={(e) => setName(e.target.value)}
               onBlur={(e) => setName(e.target.value.trim())}
             />
           </div>
-          <h3 className="text-sm mt-3 font-medium">Select an Interviewer:</h3>
+          <h3 className="text-sm mt-3 font-medium">选择面试官：</h3>
           <div className="relative flex items-center mt-1">
             <div
               id="slider-3"
-              className=" h-36 pt-1 overflow-x-scroll scroll whitespace-nowrap scroll-smooth scrollbar-hide w-[27.5rem]"
+              className="h-36 w-full max-w-[27.5rem] overflow-x-auto pt-1 whitespace-nowrap scroll-smooth scrollbar-hide"
             >
               {interviewers.map((item, key) => (
                 <div
@@ -173,11 +179,15 @@ function DetailsPopup({
                     onClick={() => setSelectedInterviewer(item.id)}
                   >
                     <Image
-                      src={item.image}
-                      alt="Picture of the interviewer"
+                      src={item.image || "/user-icon.png"}
+                      alt="面试官照片"
                       width={70}
                       height={70}
                       className="w-full h-full object-cover"
+                      onError={(event) => {
+                        // 自定义面试官的旧头像失效时仍允许 HR 完成岗位创建。
+                        event.currentTarget.src = "/user-icon.png";
+                      }}
                     />
                   </button>
                   <CardTitle className="mt-0 text-xs text-center">{item.name}</CardTitle>
@@ -201,17 +211,15 @@ function DetailsPopup({
               <></>
             )}
           </div>
-          <h3 className="text-sm font-medium">Objective:</h3>
+          <h3 className="text-sm font-medium">面试目标：</h3>
           <Textarea
             value={objective}
-            className="h-24 mt-2 border-2 border-gray-500 w-[33.2rem]"
-            placeholder="e.g. Find best candidates based on their technical skills and previous projects."
+            className="h-24 mt-2 w-full border-2 border-gray-500"
+            placeholder="例如：根据候选人的技术能力与过往项目评估其匹配度。"
             onChange={(e) => setObjective(e.target.value)}
             onBlur={(e) => setObjective(e.target.value.trim())}
           />
-          <h3 className="text-sm font-medium mt-2">
-            Upload any documents related to the interview.
-          </h3>
+          <h3 className="text-sm font-medium mt-2">上传与本次面试相关的文档。</h3>
           <FileUpload
             isUploaded={isUploaded}
             setIsUploaded={setIsUploaded}
@@ -221,9 +229,7 @@ function DetailsPopup({
           />
           <div className="flex-col mt-7 w-full">
             <div className="flex items-center cursor-pointer">
-              <span className="text-sm font-medium">
-                Do you prefer the interviewees&apos; responses to be anonymous?
-              </span>
+              <span className="text-sm font-medium">是否希望候选人的面试记录匿名？</span>
               <Switch
                 checked={isAnonymous}
                 className={`ml-4 mt-1 ${isAnonymous ? "bg-indigo-600" : "bg-[#E6E7EB]"}`}
@@ -234,12 +240,12 @@ function DetailsPopup({
               style={{ fontSize: "0.7rem", lineHeight: "0.66rem" }}
               className="font-light text-xs italic w-full text-left block"
             >
-              Note: If not anonymous, the interviewee&apos;s email and name will be collected.
+              注意：若非匿名，将收集候选人的邮箱和姓名。
             </span>
           </div>
           <div className="flex flex-row gap-3 justify-between w-full mt-3">
             <div className="flex flex-row justify-center items-center ">
-              <h3 className="text-sm font-medium ">Number of Questions:</h3>
+              <h3 className="text-sm font-medium ">题目数量：</h3>
               <input
                 type="number"
                 step="1"
@@ -259,19 +265,19 @@ function DetailsPopup({
               />
             </div>
             <div className="flex flex-row justify-center items-center">
-              <h3 className="text-sm font-medium ">Duration (mins):</h3>
+              <h3 className="text-sm font-medium ">时长（分钟）：</h3>
               <input
                 type="number"
                 step="1"
-                max="10"
+                max={String(MAX_INTERVIEW_DURATION_MINUTES)}
                 min="1"
                 className="border-b-2 text-center focus:outline-none  border-gray-500 w-14 px-2 py-0.5 ml-3"
                 value={duration}
                 onChange={(e) => {
                   let value = e.target.value;
                   if (value === "" || (Number.isInteger(Number(value)) && Number(value) > 0)) {
-                    if (Number(value) > 10) {
-                      value = "10";
+                    if (Number(value) > MAX_INTERVIEW_DURATION_MINUTES) {
+                      value = String(MAX_INTERVIEW_DURATION_MINUTES);
                     }
                     setDuration(value);
                   }
@@ -286,8 +292,8 @@ function DetailsPopup({
                   name &&
                   objective &&
                   numQuestions &&
-                  duration &&
-                  selectedInterviewer !== BigInt(0)
+                  Number(duration) >= 1 &&
+                  selectedInterviewer !== 0
                 ) || isClicked
               }
               className="bg-indigo-600 hover:bg-indigo-800  w-40"
@@ -296,17 +302,12 @@ function DetailsPopup({
                 onGenrateQuestions();
               }}
             >
-              Generate Questions
+              生成题目
             </Button>
             <Button
               disabled={
-                !(
-                  name &&
-                  objective &&
-                  numQuestions &&
-                  duration &&
-                  selectedInterviewer !== BigInt(0)
-                ) || isClicked
+                !(name && objective && numQuestions && duration && selectedInterviewer !== 0) ||
+                isClicked
               }
               className="bg-indigo-600 w-40 hover:bg-indigo-800"
               onClick={() => {
@@ -314,7 +315,7 @@ function DetailsPopup({
                 onManual();
               }}
             >
-              I&apos;ll do it myself
+              我来手动填写
             </Button>
           </div>
         </div>

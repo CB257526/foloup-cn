@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "../globals.css";
 import Providers from "@/components/providers";
-import { ClerkProvider } from "@clerk/nextjs";
 import { Toaster } from "sonner";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -10,19 +9,19 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"),
   title: "FoloUp",
-  description: "AI powered Interviews",
+  description: "AI 智能面试",
   openGraph: {
     title: "FoloUp",
-    description: "AI-powered Interviews",
+    description: "AI 智能面试",
     siteName: "FoloUp",
     images: [
       {
-        url: "/foloup.png",
+        url: "/FoloUp.png",
         width: 800,
         height: 600,
       },
     ],
-    locale: "en_US",
+    locale: "zh_CN",
     type: "website",
   },
 };
@@ -33,28 +32,26 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="zh-CN">
       <head>
         <link rel="icon" href="/browser-user-icon.ico" />
       </head>
       <body className={inter.className}>
-        <ClerkProvider dynamic>
-          <Providers>
-            {children}
-            <Toaster
-              toastOptions={{
-                classNames: {
-                  toast: "bg-white border-2 border-indigo-400",
-                  title: "text-black",
-                  description: "text-red-400",
-                  actionButton: "bg-indigo-400",
-                  cancelButton: "bg-orange-400",
-                  closeButton: "bg-lime-400",
-                },
-              }}
-            />
-          </Providers>
-        </ClerkProvider>
+        <Providers>
+          {children}
+          <Toaster
+            toastOptions={{
+              classNames: {
+                toast: "bg-white border-2 border-indigo-400",
+                title: "text-black",
+                description: "text-red-400",
+                actionButton: "bg-indigo-400",
+                cancelButton: "bg-orange-400",
+                closeButton: "bg-lime-400",
+              },
+            }}
+          />
+        </Providers>
       </body>
     </html>
   );

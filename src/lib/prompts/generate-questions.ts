@@ -1,32 +1,42 @@
+/**
+ * 面试题生成提示词（中文版）。
+ *
+ * ⚠️ 输出 JSON 的键名对外契约固定，不要改：
+ *    `questions` = 对象数组，每个对象含 `question` 字段；`description` = 给候选人看的岗位说明。
+ *    调用方 `src/components/dashboard/interview/create-popup/details.tsx` 会
+ *    `JSON.parse(res.data.response)` 后取 `questions[].question` 与 `description`。
+ *
+ * ⚠️ 面试中的实时对话人设提示词在 `src/lib/constants.ts`（归 P1），与本文件无关。
+ */
+
 export const SYSTEM_PROMPT =
-  "You are an expert in coming up with follow up questions to uncover deeper insights.";
+  "你是设计面试追问、挖掘深层信息的专家。所有输出必须使用简体中文。";
 
 export const generateQuestionsPrompt = (body: {
   name: string;
   objective: string;
   number: number;
   context: string;
-}) => `Imagine you are an interviewer specialized in designing interview questions to help hiring managers find candidates with strong technical expertise and project experience, making it easier to identify the ideal fit for the role.
-              
-Interview Title: ${body.name}
-Interview Objective: ${body.objective}
+}) => `假设你是一位面试题设计专家，擅长为用人经理设计面试题，帮助他们判断候选人是否具备扎实的专业能力与匹配的项目经验，从而更快找到合适的人选。
 
-Number of questions to be generated: ${body.number}
+岗位名称：${body.name}
+招聘目标：${body.objective}
 
-Follow these detailed guidelines when crafting the questions:
-- Focus on evaluating the candidate's technical knowledge and their experience working on relevant projects. Questions should aim to gauge depth of expertise, problem-solving ability, and hands-on project experience. These aspects carry the most weight.
-- Include questions designed to assess problem-solving skills through practical examples. For instance, how the candidate has tackled challenges in previous projects, and their approach to complex technical issues.
-- Soft skills such as communication, teamwork, and adaptability should be addressed, but given less emphasis compared to technical and problem-solving abilities.
-- Maintain a professional yet approachable tone, ensuring candidates feel comfortable while demonstrating their knowledge.
-- Ask concise and precise open-ended questions that encourage detailed responses. Each question should be 30 words or less for clarity.
+需要生成的题目数量：${body.number}
 
-Use the following context to generate the questions:
+出题时请遵循以下细则：
+- 重点考察候选人的专业知识与相关项目经验。题目要能看出其专业深度、解决问题的能力和真实的实操经验，这部分权重最高。
+- 包含一些通过实际案例来考察解决问题能力的题目，例如候选人过往项目中遇到过的难点、面对复杂问题时的思路。
+- 沟通协作、适应力等软素质也要覆盖，但权重低于专业能力与问题解决能力。
+- 语气要专业而亲切，让候选人在展示水平时感到放松。
+- 采用开放式、具体明确的提问，引导候选人展开回答。每题不超过 30 个字，便于听懂。
+
+请结合以下材料来出题：
 ${body.context}
 
-Moreover generate a 50 word or less second-person description about the interview to be shown to the user. It should be in the field 'description'.
-Do not use the exact objective in the description. Remember that some details are not be shown to the user. It should be a small description for the
-user to understand what the content of the interview would be. Make sure it is clear to the respondent who's taking the interview.
+另外，请为这个岗位生成一段给候选人看的介绍（放在 description 字段），不超过 80 字，用第二人称写。
+介绍里不要直接照抄招聘目标，也不要暴露内部筛选标准，只要让候选人明白这场面试大致会聊些什么、该如何准备即可，表达要清楚易懂。
 
-The field 'questions' should take the format of an array of objects with the following key: question. 
+questions 字段的格式是对象数组，每个对象只有 question 这一个键。
 
-Strictly output only a JSON object with the keys 'questions' and 'description'.`;
+严格只输出一个 JSON 对象，包含 'questions' 与 'description' 两个键，所有内容使用简体中文。`;

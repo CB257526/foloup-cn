@@ -1,3 +1,5 @@
+"use client";
+
 import MiniLoader from "@/components/loaders/mini-loader/miniLoader";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
@@ -12,7 +14,7 @@ import { toast } from "sonner";
 
 interface Props {
   name: string | null;
-  interviewerId: bigint;
+  interviewerId: number;
   id: string;
   url: string;
   readableSlug: string;
@@ -30,7 +32,7 @@ function InterviewCard({ name, interviewerId, id, url, readableSlug }: Props) {
   useEffect(() => {
     const fetchInterviewer = async () => {
       const interviewer = await InterviewerService.getInterviewer(interviewerId);
-      setImg(interviewer.image);
+      setImg(interviewer?.image ?? "");
     };
     fetchInterviewer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -79,7 +81,7 @@ function InterviewCard({ name, interviewerId, id, url, readableSlug }: Props) {
       .then(
         () => {
           setCopied(true);
-          toast.success("The link to your interview has been copied to your clipboard.", {
+          toast.success("面试链接已复制到剪贴板。", {
             position: "bottom-right",
             duration: 3000,
           });
@@ -123,15 +125,19 @@ function InterviewCard({ name, interviewerId, id, url, readableSlug }: Props) {
           <div className="flex flex-row items-center mx-4 ">
             <div className="w-full overflow-hidden">
               <Image
-                src={img}
-                alt="Picture of the interviewer"
+                src={img || "/user-icon.png"}
+                alt="面试官照片"
                 width={70}
                 height={70}
                 className="object-cover object-center"
+                onError={(event) => {
+                  // 旧数据可能仍指向已删除的头像，加载失败时使用本地兜底图而不是显示破图。
+                  event.currentTarget.src = "/user-icon.png";
+                }}
               />
             </div>
             <div className="text-black text-sm font-semibold mt-2 mr-2 whitespace-nowrap">
-              Responses: <span className="font-normal">{responseCount?.toString() || 0}</span>
+              面试记录：<span className="font-normal">{responseCount?.toString() || 0}</span>
             </div>
           </div>
           <div className="absolute top-2 right-2 flex gap-1">

@@ -1,17 +1,20 @@
+import { submitFeedbackAction } from "@/app/actions/feedback";
 import type { FeedbackData } from "@/types/response";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-const supabase = createClientComponentClient();
+/**
+ * feedback 数据门面。
+ *
+ * 原版用 `createClientComponentClient()` 在**浏览器**里直连 Supabase；
+ * 现改为委托 Server Action（内部走 SQLite）。签名与行为不变。
+ */
 
-const submitFeedback = async (feedbackData: FeedbackData) => {
-  const { error, data } = await supabase.from("feedback").insert(feedbackData).select();
-
-  if (error) {
-    console.error("Error submitting feedback:", error);
+const submitFeedback = async (feedbackData: FeedbackData): Promise<unknown> => {
+  try {
+    return await submitFeedbackAction({ ...feedbackData });
+  } catch (error) {
+    console.error("[FeedbackService] submitFeedback failed:", error);
     throw error;
   }
-
-  return data;
 };
 
 export const FeedbackService = {

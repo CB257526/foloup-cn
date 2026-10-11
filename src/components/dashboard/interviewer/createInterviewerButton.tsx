@@ -2,19 +2,28 @@
 
 import { Card, CardContent } from "@/components/ui/card";
 import { InterviewerService } from "@/services/interviewers.service";
-import axios from "axios";
 import { Loader2, Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+/**
+ * 原版：`axios.get("/api/create-interviewer")` —— 那个路由是 Retell 版（境外语音栈），
+ * 会在服务端建两个 Retell agent。现改为直接调 Server Action 建两个默认面试官。
+ */
 function CreateInterviewerButton() {
   const [isLoading, setIsLoading] = useState(false);
+  const router = useRouter();
 
   const createInterviewers = async () => {
     setIsLoading(true);
-    const response = await axios.get("/api/create-interviewer", {});
-    console.log(response);
-    setIsLoading(false);
-    InterviewerService.getAllInterviewers();
+    try {
+      await InterviewerService.ensureDefaultInterviewers();
+      router.refresh();
+    } catch (error) {
+      console.error("Failed to create default interviewers:", error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -34,7 +43,7 @@ function CreateInterviewerButton() {
             </div>
           )}
           <p className="my-3 mx-auto text-xs text-wrap w-fit text-center">
-            Create two Default Interviewers
+            创建两个默认面试官
           </p>
         </CardContent>
       </Card>

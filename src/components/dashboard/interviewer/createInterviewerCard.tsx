@@ -1,14 +1,16 @@
+"use client";
+
 import Modal from "@/components/dashboard/Modal";
 import { avatars } from "@/components/dashboard/interviewer/avatars";
 import { Button } from "@/components/ui/button";
 import { CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Slider } from "@/components/ui/slider";
-import { useInterviewers } from "@/contexts/interviewers.context";
-import { useClerk } from "@clerk/nextjs";
+import { InterviewerService } from "@/services/interviewers.service";
 import { Image as LucideImage } from "lucide-react";
 import { Plus } from "lucide-react";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 /* eslint-disable react-hooks/rules-of-hooks */
 import React from "react";
 import { useEffect, useState } from "react";
@@ -22,8 +24,7 @@ const createInterviewerCard = () => {
   const [exploration, setExploration] = useState(0.2);
   const [speed, setSpeed] = useState(0.9);
   const [image, setImage] = useState("");
-  const { createInterviewer } = useInterviewers();
-  const { user } = useClerk();
+  const router = useRouter();
   const [isClicked, setIsClicked] = useState(false);
 
   useEffect(() => {
@@ -38,17 +39,17 @@ const createInterviewerCard = () => {
   }, [open]);
 
   const onSave = async () => {
-    await createInterviewer({
+    await InterviewerService.createInterviewer({
       name: name,
       empathy: empathy * 10,
       rapport: rapport * 10,
       exploration: exploration * 10,
       speed: speed * 10,
-      user_id: user?.id,
       image: image,
     });
     setIsClicked(false);
     setOpen(false);
+    router.refresh();
   };
 
   return (
@@ -79,9 +80,9 @@ const createInterviewerCard = () => {
           setOpen(false);
         }}
       >
-        <div className="text-center w-[35rem]">
+        <div className="w-full max-w-[35rem] max-h-[90vh] overflow-y-auto px-2 text-center">
           <CardTitle className="text-2xl text mt-0 mb-4 p-0 font-semibold ">
-            Create an interviewer yourself!
+            自己创建面试官！
           </CardTitle>
           <div className="mt-3 p-2 flex flex-row justify-center space-x-10 items-center">
             <button
@@ -92,7 +93,7 @@ const createInterviewerCard = () => {
               {image ? (
                 <Image
                   src={image}
-                  alt="Picture of the interviewer"
+                  alt="面试官照片"
                   width={200}
                   height={40}
                   className="w-full h-full object-cover object-center"
@@ -100,27 +101,25 @@ const createInterviewerCard = () => {
               ) : (
                 <div>
                   <LucideImage className="mt-3 text-gray-300" size={100} strokeWidth={0.7} />
-                  <h4 className="text-xs text-center font-medium text-gray-400">
-                    Choose an Avatar
-                  </h4>
+                  <h4 className="text-xs text-center font-medium text-gray-400">选择头像</h4>
                 </div>
               )}
             </button>
             <div className="flex flex-col justify-center items-start ml-4">
               <div className="flex flex-row justify-center items-center">
-                <h3 className="text-lg font-medium">Name</h3>
+                <h3 className="text-lg font-medium">名称</h3>
                 <input
                   type="text"
                   className="border-b-2 focus:outline-none border-gray-500 px-2 py-0.5 ml-3 w-[12.5rem]"
-                  placeholder="e.g. Empathetic Bob"
+                  placeholder="例如：富有同理心的 Bob"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />
               </div>
-              <h3 className="text-lg mt-3 font-medium">Interviewer Settings</h3>
+              <h3 className="text-lg mt-3 font-medium">面试官设置</h3>
               <div className="ml-5 mt-2 flex flex-col justify-start items-start">
                 <div className="flex flex-row justify-between items-center mb-2">
-                  <h4 className="w-20 text-left">Empathy</h4>
+                  <h4 className="w-20 text-left">同理心</h4>
                   <div className="w-40 space-x-3 ml-3 flex justify-between items-center">
                     <Slider
                       value={[empathy]}
@@ -132,7 +131,7 @@ const createInterviewerCard = () => {
                   </div>
                 </div>
                 <div className="flex flex-row justify-between items-center mb-2">
-                  <h4 className="w-20 text-left">Rapport</h4>
+                  <h4 className="w-20 text-left">亲和力</h4>
                   <div className="w-40 space-x-3 ml-3 flex justify-between items-center">
                     <Slider
                       value={[rapport]}
@@ -144,7 +143,7 @@ const createInterviewerCard = () => {
                   </div>
                 </div>
                 <div className="flex flex-row justify-between items-center mb-2">
-                  <h4 className="w-20 text-left">Exploration</h4>
+                  <h4 className="w-20 text-left">探索度</h4>
                   <div className="w-40 space-x-3 ml-3 flex justify-between items-center">
                     <Slider
                       value={[exploration]}
@@ -156,7 +155,7 @@ const createInterviewerCard = () => {
                   </div>
                 </div>
                 <div className="flex flex-row justify-between items-center mb-2">
-                  <h4 className="w-20 text-left">Speed</h4>
+                  <h4 className="w-20 text-left">语速</h4>
                   <div className="w-40 space-x-3 ml-3 flex justify-between items-center">
                     <Slider
                       value={[speed]}
@@ -179,7 +178,7 @@ const createInterviewerCard = () => {
                 onSave();
               }}
             >
-              Save
+              保存
             </Button>
           </div>
         </div>
@@ -192,7 +191,7 @@ const createInterviewerCard = () => {
         }}
       >
         <div className="text-left w-[20rem]">
-          <CardTitle className="text-xl text mt-0 p-0 font-semibold ">Select an Avatar</CardTitle>
+          <CardTitle className="text-xl text mt-0 p-0 font-semibold ">选择头像</CardTitle>
           <ScrollArea className="mt-3 h-96">
             <div className="flex flex-row flex-wrap justify-center items-center">
               {avatars.map((item) => (
@@ -205,7 +204,16 @@ const createInterviewerCard = () => {
                     setGallery(false);
                   }}
                 >
-                  <Image alt="avatar" width={125} height={100} src={item.img} />
+                  <Image
+                    alt="头像"
+                    width={125}
+                    height={100}
+                    src={item.img || "/user-icon.png"}
+                    onError={(event) => {
+                      // 头像候选项也统一提供兜底，避免选择器显示破图。
+                      event.currentTarget.src = "/user-icon.png";
+                    }}
+                  />
                 </button>
               ))}
             </div>

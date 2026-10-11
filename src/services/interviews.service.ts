@@ -1,116 +1,81 @@
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import {
+  createInterviewAction,
+  deleteInterviewAction,
+  getAllInterviewsAction,
+  getAllRespondentsAction,
+  getInterviewByIdAction,
+  updateInterviewAction,
+} from "@/app/actions/interviews";
+import type { Interview } from "@/types/interview";
 
-const supabase = createClientComponentClient();
+/**
+ * interview 数据门面。
+ *
+ * 原版用 `createClientComponentClient()` 在**浏览器**里直连 Supabase；
+ * 现改为委托 Server Action（内部走 SQLite）。
+ * 对外方法名与参数顺序保持不变，客户端组件无需改动调用方式。
+ */
 
-const normalizeInterviewPayload = (payload: any) => {
-  const id = payload?.interviewer_id;
-  if (id === undefined || id === null) {
-    return payload;
-  }
-  if (String(id) === "0") {
-    return { ...payload, interviewer_id: null };
-  }
-
-  return payload;
-};
-
-const getAllInterviews = async (userId: string, organizationId: string) => {
+const getAllInterviews = async (): Promise<Interview[]> => {
   try {
-    const { data: clientData, error: clientError } = await supabase
-      .from("interview")
-      .select("*")
-      .or(`organization_id.eq.${organizationId},user_id.eq.${userId}`)
-      .order("created_at", { ascending: false });
-
-    return [...(clientData || [])];
+    return (await getAllInterviewsAction()) as Interview[];
   } catch (error) {
-    console.log(error);
+    console.error("[InterviewService] getAllInterviews failed:", error);
 
     return [];
   }
 };
 
-const getInterviewById = async (id: string) => {
+/**
+ * ⚠️ 声明为**非空**是为保持与原版一致的编译期契约（原版 supabase 返回 `any`，
+ * `api/generate-insights`、`(user)/call/[interviewId]` 均按非空使用）。
+ * 底层 `lib/data/interviews.getInterviewById()` 是诚实的 `Interview | null`。
+ */
+const getInterviewById = async (id: string): Promise<Interview> => {
   try {
-    const { data, error } = await supabase
-      .from("interview")
-      .select("*")
-      .or(`id.eq.${id},readable_slug.eq.${id}`);
-
-    return data ? data[0] : null;
+    return (await getInterviewByIdAction(id)) as Interview;
   } catch (error) {
-    console.log(error);
+    console.error("[InterviewService] getInterviewById failed:", error);
 
-    return [];
+    return null as unknown as Interview;
   }
 };
 
-const updateInterview = async (payload: any, id: string) => {
-  const normalizedPayload = normalizeInterviewPayload(payload);
-  const { error, data } = await supabase
-    .from("interview")
-    .update({ ...normalizedPayload })
-    .eq("id", id);
-  if (error) {
-    console.log(error);
-
-    return [];
-  }
-
-  return data;
-};
-
-const deleteInterview = async (id: string) => {
-  const { error, data } = await supabase.from("interview").delete().eq("id", id);
-  if (error) {
-    console.log(error);
-
-    return [];
-  }
-
-  return data;
-};
-
-const getAllRespondents = async (interviewId: string) => {
+const createInterview = async (payload: any): Promise<Interview | null> => {
   try {
-    const { data, error } = await supabase
-      .from("interview")
-      .select("respondents")
-      .eq("interview_id", interviewId);
-
-    return data || [];
+    return (await createInterviewAction({ ...payload })) as Interview | null;
   } catch (error) {
-    console.log(error);
+    console.error("[InterviewService] createInterview failed:", error);
 
-    return [];
+    return null;
   }
 };
 
-const createInterview = async (payload: any) => {
-  const normalizedPayload = normalizeInterviewPayload(payload);
-  const { error, data } = await supabase.from("interview").insert({ ...normalizedPayload });
-  if (error) {
-    console.log(error);
-
-    return [];
-  }
-
-  return data;
-};
-
-const deactivateInterviewsByOrgId = async (organizationId: string) => {
+const updateInterview = async (payload: any, id: string): Promise<Interview | null> => {
   try {
-    const { error } = await supabase
-      .from("interview")
-      .update({ is_active: false })
-      .eq("organization_id", organizationId)
-      .eq("is_active", true); // Optional: only update if currently active
-
-    if (error) {
-      console.error("Failed to deactivate interviews:", error);
-    }
+    return (await updateInterviewAction({ ...payload }, id)) as Interview | null;
   } catch (error) {
-    console.error("Unexpected error disabling interviews:", error);
+    console.error("[InterviewService] updateInterview failed:", error);
+
+    return null;
+  }
+};
+
+const deleteInterview = async (id: string): Promise<void> => {
+  try {
+    await deleteInterviewAction(id);
+  } catch (error) {
+    console.error("[InterviewService] deleteInterview failed:", error);
+  }
+};
+
+const getAllRespondents = async (interviewId: string): Promise<unknown[]> => {
+  try {
+    return await getAllRespondentsAction(interviewId);
+  } catch (error) {
+    console.error("[InterviewService] getAllRespondents failed:", error);
+
+    return [];
   }
 };
 
@@ -121,5 +86,4 @@ export const InterviewService = {
   deleteInterview,
   getAllRespondents,
   createInterview,
-  deactivateInterviewsByOrgId,
 };

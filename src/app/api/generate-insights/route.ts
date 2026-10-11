@@ -1,9 +1,9 @@
+import { chatCompletion, extractJson } from "@/lib/llm";
 import { logger } from "@/lib/logger";
 import { SYSTEM_PROMPT, createUserPrompt } from "@/lib/prompts/generate-insights";
 import { InterviewService } from "@/services/interviews.service";
 import { ResponseService } from "@/services/responses.service";
 import { NextResponse } from "next/server";
-import { OpenAI } from "openai";
 
 export async function POST(req: Request) {
   logger.info("generate-insights request received");
@@ -12,18 +12,18 @@ export async function POST(req: Request) {
   const responses = await ResponseService.getAllResponses(body.interviewId);
   const interview = await InterviewService.getInterviewById(body.interviewId);
 
-  let callSummaries = "";
-  if (responses) {
-    for (const response of responses) {
-      callSummaries += response.details?.call_analysis?.call_summary;
+  // 逐字稿摘要来源修正（缺陷 D-7）：
+  // 原版从 Retell 的 `details.call_analysis.call_summary` 取，该字段随 Retell 一起被移除，
+  // 继续读会得到 undefined 并被拼成字符串 "undefined" 喂给模型。
+  // 现在改用评分产出的 `analytics.softSkillSummary`；取不到就跳过（不要拼进 undefined）。
+  const summaryParts: string[] = [];
+  for (const response of responses ?? []) {
+    const summary = response.analytics?.softSkillSummary;
+    if (typeof summary === "string" && summary.trim()) {
+      summaryParts.push(summary.trim());
     }
   }
-
-  const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-    maxRetries: 5,
-    dangerouslyAllowBrowser: true,
-  });
+  const callSummaries = summaryParts.join("\n");
 
   try {
     const prompt = createUserPrompt(
@@ -33,24 +33,13 @@ export async function POST(req: Request) {
       interview.description,
     );
 
-    const baseCompletion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT,
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      response_format: { type: "json_object" },
+    const content = await chatCompletion({
+      system: SYSTEM_PROMPT,
+      user: prompt,
+      json: true, // 提示词要求输出 JSON，这里显式声明（平台约束见 lib/llm.ts）
     });
 
-    const basePromptOutput = baseCompletion.choices[0] || {};
-    const content = basePromptOutput.message?.content || "";
-    const insightsResponse = JSON.parse(content);
+    const insightsResponse = extractJson<{ insights?: unknown[] }>(content);
 
     await InterviewService.updateInterview(
       { insights: insightsResponse.insights },
@@ -66,7 +55,7 @@ export async function POST(req: Request) {
       { status: 200 },
     );
   } catch (error) {
-    logger.error("Error generating insights");
+    logger.error("Error generating insights", error instanceof Error ? error.message : String(error));
 
     return NextResponse.json({ error: "internal server error" }, { status: 500 });
   }

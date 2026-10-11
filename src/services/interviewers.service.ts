@@ -1,75 +1,67 @@
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import {
+  createInterviewerAction,
+  ensureDefaultInterviewersAction,
+  getAllInterviewersAction,
+  getInterviewerAction,
+} from "@/app/actions/interviewers";
+import type { Interviewer } from "@/types/interviewer";
 
-const supabase = createClientComponentClient();
+/**
+ * interviewer 数据门面。
+ *
+ * 原版用 `createClientComponentClient()` 在**浏览器**里直连 Supabase；
+ * 现改为委托 Server Action（内部走 SQLite）。
+ */
 
-const getAllInterviewers = async (clientId = "") => {
+const getAllInterviewers = async (): Promise<Interviewer[]> => {
   try {
-    const { data: clientData, error: clientError } = await supabase.from("interviewer").select("*");
-
-    if (clientError) {
-      console.error(`Error fetching interviewers for clientId ${clientId}:`, clientError);
-
-      return [];
-    }
-
-    return clientData || [];
+    return (await getAllInterviewersAction()) as Interviewer[];
   } catch (error) {
-    console.log(error);
+    console.error("[InterviewerService] getAllInterviewers failed:", error);
 
     return [];
   }
 };
 
-const createInterviewer = async (payload: any) => {
-  // Check for existing interviewer with the same name
-  const { data: existingInterviewer, error: checkError } = await supabase
-    .from("interviewer")
-    .select("*")
-    .eq("name", payload.name)
-    .filter("agent_id", "eq", payload.agent_id)
-    .single();
-
-  if (checkError && checkError.code !== "PGRST116") {
-    console.error("Error checking existing interviewer:", checkError);
+const createInterviewer = async (payload: any): Promise<Interviewer | null> => {
+  try {
+    return (await createInterviewerAction({ ...payload })) as Interviewer | null;
+  } catch (error) {
+    console.error("[InterviewerService] createInterviewer failed:", error);
 
     return null;
   }
-
-  if (existingInterviewer) {
-    console.error("An interviewer with this name already exists");
-
-    return null;
-  }
-
-  const { error, data } = await supabase.from("interviewer").insert({ ...payload });
-
-  if (error) {
-    console.error("Error creating interviewer:", error);
-
-    return null;
-  }
-
-  return data;
 };
 
-const getInterviewer = async (interviewerId: bigint) => {
-  const { data: interviewerData, error: interviewerError } = await supabase
-    .from("interviewer")
-    .select("*")
-    .eq("id", interviewerId)
-    .single();
+/**
+ * ⚠️ 声明为**非空**是为保持与原版一致的编译期契约（原版 supabase 返回 `any`，
+ * `api/register-call`、`call/index.tsx` 均按非空使用）。
+ * 底层 `lib/data/interviewers.getInterviewer()` 是诚实的 `Interviewer | null`。
+ */
+const getInterviewer = async (interviewerId: number | bigint): Promise<Interviewer> => {
+  try {
+    return (await getInterviewerAction(Number(interviewerId))) as Interviewer;
+  } catch (error) {
+    console.error("[InterviewerService] getInterviewer failed:", error);
 
-  if (interviewerError) {
-    console.error("Error fetching interviewer:", interviewerError);
-
-    return null;
+    return null as unknown as Interviewer;
   }
+};
 
-  return interviewerData;
+/** 建两个默认面试官。替代原 `/api/create-interviewer`（Retell 版）。 */
+const ensureDefaultInterviewers = async (): Promise<Interviewer[]> => {
+  try {
+    return (await ensureDefaultInterviewersAction()) as Interviewer[];
+  } catch (error) {
+    console.error("[InterviewerService] ensureDefaultInterviewers failed:", error);
+
+    return [];
+  }
 };
 
 export const InterviewerService = {
   getAllInterviewers,
   createInterviewer,
   getInterviewer,
+  ensureDefaultInterviewers,
 };

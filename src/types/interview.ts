@@ -9,23 +9,23 @@ export interface Quote {
   call_id: string;
 }
 
+/** 建岗位表单用的字段集（单租户：已删 user_id / organization_id） */
 export interface InterviewBase {
-  user_id: string;
-  organization_id: string;
   name: string;
-  interviewer_id: bigint;
+  /** 原版是 bigint（Postgres int8）。SQLite 无 int8，改为 number；0 表示"未选面试官" */
+  interviewer_id: number;
   objective: string;
   question_count: number;
   time_duration: string;
   is_anonymous: boolean;
   questions: Question[];
   description: string;
-  response_count: bigint;
+  response_count: number;
 }
 
 export interface InterviewDetails {
   id: string;
-  created_at: Date;
+  created_at: string;
   url: string | null;
   insights: string[];
   quotes: Quote[];

@@ -31,7 +31,7 @@ function FileUpload({
       const file = acceptedFiles[0];
       setFileName(file.name);
       if (file.size > 10 * 1024 * 1024) {
-        toast.error("Please upload a file smaller than 10MB.", {
+        toast.error("请上传小于 10MB 的文件。", {
           position: "bottom-right",
           duration: 3000,
         });
@@ -53,8 +53,8 @@ function FileUpload({
         setIsUploaded(true);
       } catch (error) {
         console.log(error);
-        toast.error("Error reading PDF", {
-          description: "Please try again.",
+        toast.error("读取 PDF 失败", {
+          description: "请重试。",
           duration: 3000,
         });
       } finally {
@@ -75,20 +75,20 @@ function FileUpload({
           <input {...getInputProps()} />
           <>
             <Inbox className="w-8 h-8 text-blue-500" />
-            <p className="mt-2 text-sm text-slate-400">Drop PDF Here</p>
+            <p className="mt-2 text-sm text-slate-400">拖拽 PDF 到此处</p>
           </>
         </div>
       ) : (
         <div className="text-left">
-          <p className="mt-2 text-sm text-slate-600">File uploaded successfully. {fileName}</p>
+          <p className="mt-2 text-sm text-slate-600">文件上传成功。{fileName}</p>
           <p className="mt-2 text-xs text-slate-600">
-            Do you want to{" "}
+            是否要{" "}
             <button
               type="button"
               className="underline text-slate-950 cursor-pointer font-semibold"
               onClick={() => setIsUploaded(false)}
             >
-              Reupload?
+              重新上传？
             </button>
           </p>
         </div>

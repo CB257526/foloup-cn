@@ -1,3 +1,5 @@
+"use client";
+
 import Modal from "@/components/dashboard/Modal";
 import InterviewerDetailsModal from "@/components/dashboard/interviewer/interviewerDetailsModal";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
@@ -22,11 +24,15 @@ const interviewerCard = ({ interviewer }: Props) => {
         <CardContent className="p-0">
           <div className="w-full h-28 overflow-hidden">
             <Image
-              src={interviewer.image}
-              alt="Picture of the interviewer"
+              src={interviewer.image || "/user-icon.png"}
+              alt="面试官照片"
               width={200}
               height={40}
               className="w-full h-full object-cover object-center"
+              onError={(event) => {
+                // 让历史面试官记录在资源失效时仍然保持完整卡片布局。
+                event.currentTarget.src = "/user-icon.png";
+              }}
             />
           </div>
           <CardTitle className="mt-3 text-base text-center">{interviewer.name}</CardTitle>

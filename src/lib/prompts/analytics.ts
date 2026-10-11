@@ -1,62 +1,79 @@
+/**
+ * 面试评分分析提示词（中文版）。
+ *
+ * ⚠️ 与「面试中对话」那套提示词是两回事：
+ *    - 本文件 = 面试**结束后**，把逐字稿喂给 LLM 做**评分与结构化分析**；
+ *    - 面试中实时对话的人设提示词在 `src/lib/constants.ts`（归 P1），二者不要混用。
+ *
+ * ⚠️ 输出 JSON 的键名是**对外契约**，下游 UI 直接按这些键取值，不要改：
+ *    `components/call/callInfo.tsx`、`components/dashboard/interview/summaryInfo.tsx`、
+ *    `components/dashboard/interview/dataTable.tsx` 消费 overallScore / overallFeedback /
+ *    communication.score / communication.feedback / questionSummaries[] / softSkillSummary。
+ */
+
 export const SYSTEM_PROMPT =
-  "You are an expert in analyzing interview transcripts. You must only use the main questions provided and not generate or infer additional questions.";
+  "你是面试逐字稿分析专家。你只能使用给定的主问题进行分析，不得自行生成或推断额外的问题。所有输出必须使用简体中文。";
 
 export const getInterviewAnalyticsPrompt = (
   interviewTranscript: string,
   mainInterviewQuestions: string,
-) => `Analyse the following interview transcript and provide structured feedback:
+) => `请分析下面这场面试的逐字稿，并给出结构化的评分与反馈：
 
 ###
-Transcript: ${interviewTranscript}
+逐字稿：
+${interviewTranscript}
 
-Main Interview Questions:
+###
+主问题清单：
 ${mainInterviewQuestions}
 
+请基于上述逐字稿与给出的主问题，按以下要求生成分析结果：
 
-Based on this transcript and the provided main interview questions, generate the following analytics in JSON format:
-1. Overall Score (0-100) and Overall Feedback (60 words) - take into account the following factors:
-   - Communication Skills: Evaluate the use of language, grammar, and vocabulary. Assess if the interviewee communicated effectively and clearly.
-   - Time Taken to Answer: Consider if the interviewee answered promptly or took too long. Note if they were concise or tended to ramble.
-   - Confidence: Assess the interviewee's confidence level. Were they assertive and self-assured, or did they seem hesitant and unsure?
-   - Clarity: Evaluate the clarity of their answers. Were their responses well-structured and easy to understand?
-   - Attitude: Consider the interviewee's attitude towards the interview and questions. Were they positive, respectful, and engaged?
-   - Relevance of Answers: Determine if the interviewee's responses are relevant to the questions asked. Assess if they stayed on topic or veered off track.
-   - Depth of Knowledge: Evaluate the interviewee's depth of understanding and knowledge in the subject matter. Look for detailed and insightful answers.
-   - Problem-Solving Ability: Consider how the interviewee approaches problem-solving questions. Assess their logical reasoning and analytical skills.
-   - Examples and Evidence: Note if the interviewee provides concrete examples or evidence to support their answers. This can indicate experience and credibility.
-   - Listening Skills: Look for signs that the interviewee is actively listening and responding appropriately to follow-up questions.
-   - Consistency: Evaluate if the interviewee's answers are consistent throughout the interview or if they contradict themselves.
-   - Adaptability: Assess how well the interviewee adapts to different types of questions, including unexpected or challenging ones.
+1. 总体评分（0-100）与总体评价（60 字以内）。评分需综合考虑以下因素：
+   - 表达能力：用词是否准确、句子是否通顺、能否把复杂事情说清楚。
+   - 回答速度：是否及时作答，还是明显拖延；回答是否简练，还是有冗长跑题的情况。
+   - 自信程度：表达是否笃定、有底气，还是犹豫、含糊、缺少把握。
+   - 条理性：回答结构是否清晰、层次是否分明，听者是否容易跟上。
+   - 态度：面对面试与提问是否积极、尊重、投入。
+   - 相关性：回答是否切题，有没有明显偏题、答非所问。
+   - 专业深度：对岗位相关领域的理解是否深入，有无有见地的细节。
+   - 问题解决能力：面对情景类/难题时的思路是否清晰，逻辑推理与分析是否到位。
+   - 举例与佐证：是否用具体案例、数据或事实支撑自己的说法（体现经验与可信度）。
+   - 倾听能力：是否在认真听题，能否针对追问给出贴合的回应。
+   - 一致性：整场回答前后是否自洽，有无自相矛盾。
+   - 应变能力：面对意外问题或追问时，能否灵活调整。
 
-2. Communication Skills: Score (0-10) and Feedback (60 words). Rating system and guidleines for communication skills is as follwing.
-    - 10: Fully operational command, use of English is appropriate, accurate, fluent, shows complete understanding.
-    - 09: Fully operational command with occasional inaccuracies and inappropriate usage. May misunderstand unfamiliar situations but handles complex arguments well.
-    - 08: Operational command with occasional inaccuracies, inappropriate usage, and misunderstandings. Handles complex language and detailed reasoning well.
-    - 07: Effective command despite some inaccuracies, inappropriate usage, and misunderstandings. Can use and understand reasonably complex language, especially in familiar situations.
-    - 06: Partial command, copes with overall meaning, frequent mistakes. Handles basic communication in their field.
-    - 05: Basic competence limited to familiar situations with frequent problems in understanding and expression.
-    - 04: Understands only general meaning in very familiar situations, with frequent communication breakdowns.
-    - 03: Has great difficulty understanding spoken English.
-    - 02: Has no ability to use the language except a few isolated words.
-    - 01: Did not answer the questions.
-3. Summary for each main interview question: ${mainInterviewQuestions}
-   - Use ONLY the main questions provided, it should output all the questions with the numbers even if it's not found in the transcript.
-   - Follow the below rules when outputing the question and summary
-      - If a main interview question isn't found in the transcript, then output the main question and give the summary as "Not Asked"
-      - If a main interview question is found in the transcript but an answer couldn't be found, then output the main question and give the summary as "Not Answered"
-      - If a main interview question is found in the transcript and an answer can also be found, then,
-          - For each main question (q), provide a summary that includes:
-            a) The candidate's response to the main question
-            b) Any follow-up questions that were asked related to this main question and their answers
-          - The summary should be a cohesive paragraph encompassing all related information for each main question
-4. Create a 10 to 15 words summary regarding the soft skills considering factors such as confidence, leadership, adaptability, critical thinking and decision making.
-Ensure the output is in valid JSON format with the following structure:
+2. 表达能力评分（0-10）与评语（60 字以内）。请按下述 10 档标准打分（对应中文表达能力）：
+   - 10 分：表达完全自如，用词准确、流畅，理解毫无障碍。
+   - 09 分：表达自如，偶有小瑕疵或个别用词不当；面对陌生话题可能略有偏差，但能驾驭复杂论述。
+   - 08 分：表达基本自如，偶有不准或误解；能清晰处理复杂信息与细致推理。
+   - 07 分：表达有效，虽有瑕疵与误解，但能理解并使用较复杂的表达，尤其在熟悉的话题上。
+   - 06 分：表达部分受限，能传达大意，但错误较多；可完成本职领域内的基本沟通。
+   - 05 分：仅在熟悉场景下具备基本沟通能力，理解与表达都常有困难。
+   - 04 分：在极为熟悉的场景下也只能听懂大意，沟通经常中断。
+   - 03 分：理解对方表达有严重困难。
+   - 02 分：除个别词句外基本无法用该语言沟通。
+   - 01 分：完全没有回答问题。
+
+3. 逐题小结：${mainInterviewQuestions}
+   - 只使用给出的主问题，**必须把全部主问题带序号输出**，即使逐字稿中找不到。
+   - 输出题目与小结时遵守以下规则：
+      - 若某个主问题在逐字稿中**没有被问到**，输出该问题，小结写「未提问」。
+      - 若某个主问题**被问到了但找不到候选人的回答**，输出该问题，小结写「未作答」。
+      - 若某个主问题被问到、也能找到回答，则为该主问题提供小结，内容包含：
+          a) 候选人对该主问题的回答要点
+          b) 围绕该主问题产生的追问，以及候选人对追问的回答
+      - 小结写成一段连贯的中文，把该主问题相关的信息都覆盖到。
+      - question 字段必须原样引用该主问题的原文（可保留题目清单里的序号，不要改写、不要重述）。
+4. 软素质总结：就自信度、领导力、适应力、批判性思维、决策能力等方面，给出一句 30 字以内的概括。
+
+请确保输出为合法的 JSON，结构如下：
 {
   "overallScore": number,
   "overallFeedback": string,
   "communication": { "score": number, "feedback": string },
   "questionSummaries": [{ "question": string, "summary": string }],
-  "softSkillSummary: string
+  "softSkillSummary": string
 }
 
-IMPORTANT: Only use the main questions provided. Do not generate or infer additional questions such as follow-up questions.`;
+重要：只使用给定的主问题。不要生成或推断追问等额外的问题。全程使用简体中文。`;

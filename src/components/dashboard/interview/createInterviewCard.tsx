@@ -3,10 +3,16 @@
 import Modal from "@/components/dashboard/Modal";
 import CreateInterviewModal from "@/components/dashboard/interview/createInterviewModal";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import type { Interviewer } from "@/types/interviewer";
 import { Plus } from "lucide-react";
 import React, { useState } from "react";
 
-function CreateInterviewCard() {
+interface Props {
+  interviewers: Interviewer[];
+  defaultDuration?: number;
+}
+
+function CreateInterviewCard({ interviewers, defaultDuration }: Props) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -21,7 +27,7 @@ function CreateInterviewCard() {
           <div className="flex flex-col justify-center items-center w-full overflow-hidden">
             <Plus size={90} strokeWidth={0.5} className="text-gray-700" />
           </div>
-          <CardTitle className="p-0 text-md text-center">Create an Interview</CardTitle>
+          <CardTitle className="p-0 text-md text-center">新建岗位</CardTitle>
         </CardContent>
       </Card>
       <Modal
@@ -31,7 +37,12 @@ function CreateInterviewCard() {
           setOpen(false);
         }}
       >
-        <CreateInterviewModal open={open} setOpen={setOpen} />
+        <CreateInterviewModal
+          open={open}
+          setOpen={setOpen}
+          interviewers={interviewers}
+          defaultDuration={defaultDuration}
+        />
       </Modal>
     </>
   );

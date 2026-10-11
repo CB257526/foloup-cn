@@ -1,0 +1,72 @@
+/* ══════════════════════════════════════════════════════════════════════
+ * P3 · 候选人页窄屏（手机）适配 —— 只作用于本页
+ *
+ * 背景：候选人页把 P1 的通话组件（`src/components/call/**`）直接渲染出来。
+ *   该组件已验收冻结、P3 不得修改，但它内部有几处**为桌面设计的固定尺寸**：
+ *     · 开始页 / 结束页 / 不可参加页：`min-w-[400px] max-w-[400px]`
+ *     · 卡片：`h-[88vh]`
+ *     · 通话中左右两栏的大字号：`text-[22px]` / `min-h-[250px]`
+ *   在 375~430px 宽的手机上，这些固定尺寸会造成**横向溢出**（内容被截断、出现横向滚动条）。
+ *
+ * 做法：在页面层用一层作用域限定（`.candidate-call-shell`）把固定尺寸放开成自适应。
+ *   这只是「不溢出」的最小修复，**不改动通话组件内部的任何视觉设计**：
+ *   桌面端（>640px）的渲染结果与改造前完全一致（媒体查询之外零影响）。
+ * ══════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 640px) {
+  /* ── 1. 放开通话组件内三处固定 400px 面板（开始页 / 结束页 / 不可参加页）── */
+  .candidate-call-shell [class*="min-w-[400px]"] {
+    min-width: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .candidate-call-shell [class*="max-w-[400px]"] {
+    max-width: 100% !important;
+  }
+
+  /* ── 2. 88vh 的卡片在手机上放不下时允许卡片内部滚动，避免按钮被裁掉 ── */
+  .candidate-call-shell [class*="h-[88vh]"] {
+    height: auto !important;
+    min-height: 88vh;
+    overflow-y: auto;
+  }
+
+  /* ── 3. 通话中的左右两栏：窄屏下改为上下堆叠 ──
+     380~430px 的手机上，两栏各只剩约 145px 宽，中文会“一个字一行”，基本无法阅读；
+     堆叠后每栏占满宽度。选择器只命中「flex-row + p-2」这一个容器（通话中的两栏），
+     其它 flex-row 行不受影响。 */
+  .candidate-call-shell [class*="flex-row"][class*="p-2"] {
+    flex-direction: column !important;
+  }
+
+  .candidate-call-shell [class*="flex-row"][class*="p-2"] > div {
+    width: 100% !important;
+  }
+
+  /* 堆叠后左右不再相邻，去掉那一侧的竖向边框（视觉上不再需要分栏线） */
+  .candidate-call-shell [class*="flex-row"][class*="p-2"] > div:first-child {
+    border-left-width: 0 !important;
+    border-right-width: 0 !important;
+  }
+
+  /* ── 4. 通话中的字号与固定高度：缩小并放开，避免挤压 ── */
+  .candidate-call-shell [class*="text-[22px]"] {
+    font-size: 16px !important;
+    line-height: 1.6 !important;
+  }
+
+  .candidate-call-shell [class*="min-h-[250px]"] {
+    min-height: 60px !important;
+  }
+
+  .candidate-call-shell [class*="h-[250px]"] {
+    height: auto !important;
+    max-height: 200px;
+  }
+
+  /* ── 5. 兜底：本页不出现横向滚动 ── */
+  .candidate-shell {
+    overflow-x: hidden;
+  }
+}
