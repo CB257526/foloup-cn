@@ -2,14 +2,17 @@
 
 import Call from "@/components/call";
 import LoaderWithText from "@/components/loaders/loader-with-text/loaderWithText";
+import { CandidateService } from "@/services/candidates.service";
 import { InterviewService } from "@/services/interviews.service";
+import type { PublicCandidateInvite } from "@/types/candidate";
 import type { Interview } from "@/types/interview";
 import { ArrowUpRightSquareIcon } from "lucide-react";
 import Image from "next/image";
 import { use, useEffect, useState } from "react";
+import { toast } from "sonner";
 import { primeAudioOnFirstGesture } from "./audio-unlock";
-import { ConsentGate } from "./consent-gate";
 import { type ConsentRecord, readConsent, saveConsent } from "./consent";
+import { ConsentGate } from "./consent-gate";
 import "./candidate-shell.css";
 
 type Props = {
@@ -107,6 +110,7 @@ function InterviewInterface({ params }: Props) {
   const resolvedParams = use(params);
   const interviewId = decodeParam(resolvedParams.interviewId);
   const [interview, setInterview] = useState<Interview>();
+  const [candidate, setCandidate] = useState<PublicCandidateInvite | null>(null);
   const [isActive, setIsActive] = useState(true);
   const [interviewNotFound, setInterviewNotFound] = useState(false);
   const [consentState, setConsentState] = useState<ConsentState>("unknown");
@@ -117,22 +121,37 @@ function InterviewInterface({ params }: Props) {
   }, [interview]);
 
   useEffect(() => {
-    const fetchinterview = async () => {
+    let cancelled = false;
+    const loadInterviewTarget = async () => {
       try {
-        const response = await InterviewService.getInterviewById(interviewId);
+        // 优先按候选人随机令牌查专属邀请；不匹配时才按历史岗位链接兼容读取。
+        const invite = await CandidateService.getPublicInviteByToken(interviewId);
+        const targetInterviewId = invite?.interview_id ?? interviewId;
+        const response = await InterviewService.getInterviewById(targetInterviewId);
+        if (cancelled) {
+          return;
+        }
+        if (invite) {
+          setCandidate(invite);
+        }
         if (response) {
           setInterview(response);
-          document.title = response.name;
+          document.title = invite ? `${invite.name} - ${response.name}` : response.name;
         } else {
           setInterviewNotFound(true);
         }
       } catch (error) {
         console.error(error);
-        setInterviewNotFound(true);
+        if (!cancelled) {
+          setInterviewNotFound(true);
+        }
       }
     };
 
-    fetchinterview();
+    void loadInterviewTarget();
+    return () => {
+      cancelled = true;
+    };
   }, [interviewId]);
 
   // 同意状态只能在客户端读（localStorage），所以放在 effect 里，避免服务端/客户端水合不一致。
@@ -140,15 +159,34 @@ function InterviewInterface({ params }: Props) {
     if (!interview?.id) {
       return;
     }
-    setConsentState(readConsent(interview.id) ? "given" : "missing");
-  }, [interview?.id]);
+    setConsentState(readConsent(interview.id, candidate?.id) ? "given" : "missing");
+  }, [interview?.id, candidate?.id]);
 
   // iOS Safari 音频解锁：候选人第一次触摸页面时就预热音频通道（详见 audio-unlock.ts）
   useEffect(() => primeAudioOnFirstGesture(), []);
 
-  const handleAgree = (record: ConsentRecord) => {
-    saveConsent(record);
-    setConsentState("given");
+  const handleAgree = async (record: ConsentRecord) => {
+    if (!interview) {
+      return;
+    }
+    try {
+      if (candidate) {
+        await CandidateService.recordConsent({
+          id: candidate.id,
+          interviewId: interview.id,
+          consentVersion: record.version,
+          voiceProcessingAccepted: record.sensitiveDataAgreed,
+          evaluationAccepted: record.retentionAgreed,
+          improvementAccepted: record.optionalImproveAgreed,
+          userAgent: record.userAgent,
+        });
+      }
+      saveConsent(record, candidate?.id);
+      setConsentState("given");
+    } catch (error) {
+      console.error("保存候选人同意记录失败：", error);
+      toast.error("暂时无法保存同意记录", { description: "请检查网络后重试，再开始面试。" });
+    }
   };
 
   return (
@@ -164,6 +202,30 @@ function InterviewInterface({ params }: Props) {
           ) : (
             <PopupLoader />
           )
+        ) : !candidate && interview.questions.length === 0 ? (
+          <PopUpMessage
+            title="这是岗位模板"
+            description="岗位模板不能直接用于面试。请联系招聘人员，为你创建并发送个人专属面试链接。"
+            image="/invalid-url.png"
+          />
+        ) : candidate?.status === "revoked" || candidate?.revoked_at ? (
+          <PopUpMessage
+            title="面试链接已撤销"
+            description="该候选人专属链接已失效，请联系人力资源获取新的面试安排。"
+            image="/closed.png"
+          />
+        ) : candidate?.status === "in_progress" ? (
+          <PopUpMessage
+            title="面试已开始"
+            description="该专属链接对应的面试已经开始，为避免重复创建记录，请继续使用原页面；如页面意外关闭，请联系人力资源协助恢复。"
+            image="/closed.png"
+          />
+        ) : candidate?.status === "completed" ? (
+          <PopUpMessage
+            title="本次面试已完成"
+            description="该专属链接已完成过面试。如需补充安排，请联系人力资源。"
+            image="/closed.png"
+          />
         ) : !isActive ? (
           <PopUpMessage
             title="面试暂不可用"
@@ -172,13 +234,52 @@ function InterviewInterface({ params }: Props) {
           />
         ) : consentState === "unknown" ? (
           <PopupLoader />
-        ) : consentState === "missing" ? (
-          // 合规要求：同意动作必须在通话开始**之前**完成（P1 的通话组件内部不涉及合规交互）
-          <ConsentGate interview={interview} onAgree={handleAgree} />
         ) : (
-          // 手机端与桌面端走同一条渲染路径（原版在手机上是「请用电脑」的拒绝块，已按要求删除）
-          <div className="candidate-call-shell">
-            <Call interview={interview} />
+          <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+            {candidate && (
+              <section className="rounded-xl border border-indigo-100 bg-white p-4 shadow-sm sm:p-6">
+                <p className="text-xs font-semibold tracking-wide text-indigo-600">
+                  候选人专属面试
+                </p>
+                <h1 className="mt-1 text-xl font-semibold text-slate-900">{candidate.name}</h1>
+                <p className="mt-1 text-sm text-slate-600">{candidate.email}</p>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <p className="text-xs font-medium text-slate-500">本场岗位</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-800">{interview.name}</p>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <p className="text-xs font-medium text-slate-500">已准备的简历</p>
+                    <p className="mt-1 flex items-center gap-2 text-sm font-semibold text-slate-800">
+                      <span aria-hidden="true">📄</span>
+                      {candidate.resume_file_name}
+                    </p>
+                  </div>
+                </div>
+                {candidate.candidate_description && (
+                  <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                    {candidate.candidate_description}
+                  </p>
+                )}
+                <p className="mt-3 text-xs text-slate-500">
+                  这条链接仅属于你；页面不会展示其他候选人的资料。
+                </p>
+              </section>
+            )}
+            {consentState === "missing" ? (
+              <ConsentGate
+                interview={interview}
+                onAgree={handleAgree}
+                inviteToken={candidate ? interviewId : undefined}
+              />
+            ) : (
+              <div className="candidate-call-shell">
+                <Call
+                  interview={interview}
+                  candidate={candidate ? { ...candidate, token: interviewId } : undefined}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>

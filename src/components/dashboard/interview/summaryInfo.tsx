@@ -1,36 +1,43 @@
 "use client";
 
 import DataTable, { type TableData } from "@/components/dashboard/interview/dataTable";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CandidateStatus } from "@/lib/enum";
 import { convertSecondstoMMSS } from "@/lib/utils";
 import type { Interview } from "@/types/interview";
 import type { Interviewer } from "@/types/interviewer";
 import type { Response } from "@/types/response";
-import { PieChart } from "@mui/x-charts/PieChart";
 import { Info, StarIcon, UserCircleIcon } from "lucide-react";
 import Image from "next/image";
-import React, { useEffect, useState } from "react";
+import { type ReactNode, useMemo } from "react";
 
 type SummaryProps = {
   responses: Response[];
   interview: Interview | undefined;
-  /** 由服务端页面查出后传入（原版来自 interviewers.context） */
   interviewers: Interviewer[];
+};
+
+type DistributionRow = {
+  label: string;
+  count: number;
+  color: string;
 };
 
 function InfoTooltip({ content }: { content: string }) {
   return (
     <TooltipProvider>
       <Tooltip>
-        <TooltipTrigger>
-          <Info
-            className="h-2 w-2 text-[#4F46E5] inline-block ml-0 align-super font-bold"
-            strokeWidth={2.5}
-          />
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={content}
+            className="inline-flex h-5 w-5 items-center justify-center rounded-full text-indigo-500 hover:bg-indigo-50"
+          >
+            <Info size={14} strokeWidth={2.5} />
+          </button>
         </TooltipTrigger>
-        <TooltipContent className="bg-gray-500 text-white font-normal">
+        <TooltipContent className="bg-slate-800 text-white">
           <p>{content}</p>
         </TooltipContent>
       </Tooltip>
@@ -38,276 +45,210 @@ function InfoTooltip({ content }: { content: string }) {
   );
 }
 
+function MetricCard({ title, value, help }: { title: string; value: string; help: string }) {
+  return (
+    <section className="flex min-w-0 flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-1">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-medium text-slate-600">{title}</h3>
+        <InfoTooltip content={help} />
+      </div>
+      <p className="mt-4 truncate text-2xl font-semibold tracking-tight text-indigo-600">{value}</p>
+    </section>
+  );
+}
+
+function DistributionCard({
+  title,
+  help,
+  icon,
+  rows,
+  total,
+}: {
+  title: string;
+  help: string;
+  icon: ReactNode;
+  rows: DistributionRow[];
+  total: number;
+}) {
+  return (
+    <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 xl:col-span-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0 text-slate-700">{icon}</span>
+          <h3 className="truncate text-sm font-semibold text-slate-800">{title}</h3>
+        </div>
+        <InfoTooltip content={help} />
+      </div>
+      <p className="mt-1 text-xs text-slate-500">共 {total} 位候选人</p>
+      <div className="mt-4 space-y-3">
+        {rows.map((row) => {
+          const percent = total > 0 ? Math.max(0, Math.min(100, (row.count / total) * 100)) : 0;
+          return (
+            <div
+              key={row.label}
+              className="grid grid-cols-[minmax(92px,0.85fr)_minmax(0,1.6fr)_36px] items-center gap-2"
+            >
+              <span className="truncate text-xs text-slate-600 sm:text-sm">{row.label}</span>
+              <div
+                role="progressbar"
+                tabIndex={0}
+                aria-label={`${row.label}占比`}
+                aria-valuemin={0}
+                aria-valuemax={total || 1}
+                aria-valuenow={row.count}
+                className="h-2.5 overflow-hidden rounded-full bg-slate-100"
+              >
+                <div
+                  className="h-full rounded-full transition-[width] duration-300"
+                  style={{ width: `${percent}%`, backgroundColor: row.color }}
+                />
+              </div>
+              <span className="text-right text-xs font-semibold tabular-nums text-slate-700">
+                {row.count}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function SummaryInfo({ responses, interview, interviewers }: SummaryProps) {
-  const [interviewer, setInterviewer] = useState<Interviewer>();
-  const [totalDuration, setTotalDuration] = useState<number>(0);
-  /**
-   * 平均综合评分（来自 analytics.overallScore；未评分的记录不计入）。
-   * 原版这里是「面试完成率」，数据来自 Retell 的 agent_task_completion_rating ——
-   * 换掉 Retell 后该字段已不存在，卡片会恒为 0（缺陷 D-7）。改用我们真实拥有的评分数据。
-   */
-  const [avgScore, setAvgScore] = useState<number | null>(null);
-  /**
-   * 评分分布（替代原先依赖 Retell 的「候选人情绪」图 —— 情绪字段同样已不存在）。
-   * 分档：优秀 ≥80 / 良好 60–79 / 待提升 <60 / 未评分。
-   */
-  const [scoreBuckets, setScoreBuckets] = useState({
-    excellent: 0,
-    good: 0,
-    fair: 0,
-    none: 0,
-  });
+  const interviewer = useMemo(
+    () => interviewers.find((item) => item.id === interview?.interviewer_id),
+    [interviewers, interview?.interviewer_id],
+  );
 
-  const totalResponses = responses.length;
+  const metrics = useMemo(() => {
+    const scoreBuckets = { excellent: 0, good: 0, fair: 0, none: 0 };
+    const statusCounts: Record<CandidateStatus, number> = {
+      [CandidateStatus.NO_STATUS]: 0,
+      [CandidateStatus.NOT_SELECTED]: 0,
+      [CandidateStatus.POTENTIAL]: 0,
+      [CandidateStatus.SELECTED]: 0,
+    };
+    let totalDuration = 0;
+    let scoreTotal = 0;
+    let scoredCount = 0;
 
-  const [candidateStatusCount, setCandidateStatusCount] = useState({
-    [CandidateStatus.NO_STATUS]: 0,
-    [CandidateStatus.NOT_SELECTED]: 0,
-    [CandidateStatus.POTENTIAL]: 0,
-    [CandidateStatus.SELECTED]: 0,
-  });
+    for (const response of responses) {
+      totalDuration += response.server_duration ?? response.duration ?? 0;
+      const score = response.analytics?.overallScore;
+      if (typeof score === "number" && Number.isFinite(score)) {
+        scoreTotal += score;
+        scoredCount += 1;
+        if (score >= 80) {
+          scoreBuckets.excellent += 1;
+        } else if (score >= 60) {
+          scoreBuckets.good += 1;
+        } else {
+          scoreBuckets.fair += 1;
+        }
+      } else {
+        scoreBuckets.none += 1;
+      }
 
-  const [tableData, setTableData] = useState<TableData[]>([]);
+      const status = Object.values(CandidateStatus).includes(
+        response.candidate_status as CandidateStatus,
+      )
+        ? (response.candidate_status as CandidateStatus)
+        : CandidateStatus.NO_STATUS;
+      statusCounts[status] += 1;
+    }
 
-  const prepareTableData = (responses: Response[]): TableData[] => {
-    return responses.map((response) => ({
+    const tableData: TableData[] = responses.map((response) => ({
       call_id: response.call_id,
       name: response.name || "匿名",
       overallScore: response.analytics?.overallScore || 0,
       communicationScore: response.analytics?.communication?.score || 0,
       callSummary: response.analytics?.softSkillSummary || "暂无总结",
     }));
-  };
 
-  useEffect(() => {
-    if (!interviewers || !interview) {
-      return;
-    }
-    const interviewer = interviewers.find(
-      (interviewer) => interviewer.id === interview.interviewer_id,
-    );
-    setInterviewer(interviewer);
-  }, [interviewers, interview]);
-
-  // biome-ignore lint/correctness/useExhaustiveDependencies: <explanation>
-  useEffect(() => {
-    if (!responses) {
-      return;
-    }
-
-    const scoreAcc = { sum: 0, count: 0 };
-    const scoreBucketCounter = { excellent: 0, good: 0, fair: 0, none: 0 };
-
-    let totalDuration = 0;
-
-    const statusCounter = {
-      [CandidateStatus.NO_STATUS]: 0,
-      [CandidateStatus.NOT_SELECTED]: 0,
-      [CandidateStatus.POTENTIAL]: 0,
-      [CandidateStatus.SELECTED]: 0,
+    return {
+      totalDuration,
+      averageDuration: responses.length ? totalDuration / responses.length : 0,
+      averageScore: scoredCount ? Math.round(scoreTotal / scoredCount) : null,
+      scoreBuckets,
+      statusCounts,
+      tableData,
     };
-
-    for (const response of responses) {
-      // 平均分与评分分布：只用真实存在的 analytics.overallScore（未评分的记入「未评分」档）
-      const score = response.analytics?.overallScore;
-      if (typeof score === "number" && Number.isFinite(score)) {
-        scoreAcc.sum += score;
-        scoreAcc.count += 1;
-        if (score >= 80) {
-          scoreBucketCounter.excellent += 1;
-        } else if (score >= 60) {
-          scoreBucketCounter.good += 1;
-        } else {
-          scoreBucketCounter.fair += 1;
-        }
-      } else {
-        scoreBucketCounter.none += 1;
-      }
-
-      totalDuration += response.duration;
-      if (Object.values(CandidateStatus).includes(response.candidate_status as CandidateStatus)) {
-        statusCounter[response.candidate_status as CandidateStatus]++;
-      }
-    }
-
-    setTotalDuration(totalDuration);
-    setAvgScore(scoreAcc.count > 0 ? scoreAcc.sum / scoreAcc.count : null);
-    setScoreBuckets(scoreBucketCounter);
-    setCandidateStatusCount(statusCounter);
-
-    const preparedData = prepareTableData(responses);
-    setTableData(preparedData);
   }, [responses]);
 
+  if (responses.length === 0) {
+    return (
+      <div className="flex min-h-[420px] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center">
+        <Image src="/No-Responses.png" alt="暂无面试记录" width={220} height={220} />
+        <p className="mt-2 text-sm font-medium text-slate-700">完成面试后，结果会显示在这里</p>
+        <p className="mt-1 text-xs text-slate-500">候选人问题和链接请从岗位候选人工作台创建。</p>
+      </div>
+    );
+  }
+
+  const scoreRows: DistributionRow[] = [
+    { label: "优秀（≥80）", count: metrics.scoreBuckets.excellent, color: "#16a34a" },
+    { label: "良好（60–79）", count: metrics.scoreBuckets.good, color: "#eab308" },
+    { label: "待提升（<60）", count: metrics.scoreBuckets.fair, color: "#ef4444" },
+    { label: "未评分", count: metrics.scoreBuckets.none, color: "#94a3b8" },
+  ];
+  const statusRows: DistributionRow[] = [
+    { label: "已选中", count: metrics.statusCounts[CandidateStatus.SELECTED], color: "#16a34a" },
+    { label: "潜力人选", count: metrics.statusCounts[CandidateStatus.POTENTIAL], color: "#eab308" },
+    {
+      label: "未选中",
+      count: metrics.statusCounts[CandidateStatus.NOT_SELECTED],
+      color: "#ef4444",
+    },
+    { label: "待筛选", count: metrics.statusCounts[CandidateStatus.NO_STATUS], color: "#94a3b8" },
+  ];
+
   return (
-    <div className="h-screen z-[10] mx-2">
-      {responses.length > 0 ? (
-        <div className="bg-slate-200 rounded-2xl min-h-[120px] p-2 ">
-          <div className="flex flex-row gap-2 justify-between items-center mx-2">
-            <div className="flex flex-row gap-2 items-center">
-              <p className="font-semibold my-2">整体分析</p>
-            </div>
-            <p className="text-sm">
-              使用的面试官：<span className="font-medium">{interviewer?.name}</span>
+    <div className="min-w-0 space-y-4 pb-6">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">面试结果概览</p>
+            <p className="mt-1 text-sm leading-6 text-slate-600">
+              岗位描述：{interview?.description || interview?.objective || "未填写岗位描述"}
             </p>
           </div>
-          <p className="my-3 ml-2 text-sm">
-            岗位描述：<span className="font-medium">{interview?.description}</span>
+          <p className="shrink-0 text-sm text-slate-500">
+            AI 面试官：
+            <span className="font-medium text-slate-700">{interviewer?.name || "未指定"}</span>
           </p>
-          <div className="flex flex-col gap-1 my-2 mt-4 mx-2 p-4 rounded-2xl bg-slate-50 shadow-md">
-            <ScrollArea className="h-[250px]">
-              <DataTable data={tableData} interviewId={interview?.id || ""} />
-            </ScrollArea>
-          </div>
-          <div className="flex flex-row gap-1 my-2 justify-center">
-            <div className="flex flex-col">
-              <div className="flex flex-col gap-1 my-2 mt-4 mx-2 p-3 rounded-2xl bg-slate-50 shadow-md max-w-[400px]">
-                <div className="flex flex-row items-center justify-center gap-1 font-semibold mb-1 text-[15px]">
-                  平均时长
-                  <InfoTooltip content="用户完成一次面试的平均用时" />
-                </div>
-                <div className="flex items-center justify-center">
-                  <p className="text-2xl font-semibold text-indigo-600 w-fit p-1 px-2 bg-indigo-100 rounded-md">
-                    {convertSecondstoMMSS(totalDuration / responses.length)}
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-col items-center justify-center gap-1 mx-2 p-3 rounded-2xl bg-slate-50 shadow-md max-w-[360px]">
-                <div className="flex flex-row gap-1 font-semibold mb-1 text-[15px] mx-auto text-center">
-                  平均综合评分
-                  <InfoTooltip content="所有已评分面试记录的综合评分平均值（满分 100）" />
-                </div>
-                <p className="w-fit text-2xl font-semibold text-indigo-600  p-1 px-2 bg-indigo-100 rounded-md">
-                  {avgScore === null ? "暂无评分" : Math.round(avgScore)}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-col gap-1 my-2 mt-4 mx-2 p-4 rounded-2xl bg-slate-50 shadow-md max-w-[360px]">
-              <div className="flex flex-row gap-2 text-[15px] font-bold mb-3 mx-auto">
-                <StarIcon />
-                评分分布
-                <InfoTooltip content="按综合评分分档：优秀 ≥80 / 良好 60-79 / 待提升 <60 / 未评分" />
-              </div>
-              <PieChart
-                sx={{
-                  "& .MuiChartsLegend-series text": {
-                    fontSize: "0.8rem !important",
-                  },
-                }}
-                series={[
-                  {
-                    data: [
-                      {
-                        id: 0,
-                        value: scoreBuckets.excellent,
-                        label: `优秀 (${scoreBuckets.excellent})`,
-                        color: "#22c55e",
-                      },
-                      {
-                        id: 1,
-                        value: scoreBuckets.good,
-                        label: `良好 (${scoreBuckets.good})`,
-                        color: "#eab308",
-                      },
-                      {
-                        id: 2,
-                        value: scoreBuckets.fair,
-                        label: `待提升 (${scoreBuckets.fair})`,
-                        color: "#eb4444",
-                      },
-                      {
-                        id: 3,
-                        value: scoreBuckets.none,
-                        label: `未评分 (${scoreBuckets.none})`,
-                        color: "#9ca3af",
-                      },
-                    ],
-                    highlightScope: { faded: "global", highlighted: "item" },
-                    faded: {
-                      innerRadius: 10,
-                      additionalRadius: -10,
-                      color: "gray",
-                    },
-                  },
-                ]}
-                width={360}
-                height={120}
-              />
-            </div>
-            <div className="flex flex-col gap-1 my-2 mt-4 mx-2 p-4 rounded-2xl bg-slate-50 shadow-md">
-              <div className="flex flex-row gap-2 text-[15px] font-bold mx-auto mb-1">
-                <UserCircleIcon />
-                候选人状态
-                <InfoTooltip content="候选人筛选状态分布" />
-              </div>
-              <div className="text-sm text-center mb-1">面试记录总数：{totalResponses}</div>
-              <PieChart
-                sx={{
-                  "& .MuiChartsLegend-series text": {
-                    fontSize: "0.8rem !important",
-                  },
-                }}
-                series={[
-                  {
-                    data: [
-                      {
-                        id: 0,
-                        value: candidateStatusCount[CandidateStatus.SELECTED],
-                        label: `已选中 (${candidateStatusCount[CandidateStatus.SELECTED]})`,
-                        color: "#22c55e",
-                      },
-                      {
-                        id: 1,
-                        value: candidateStatusCount[CandidateStatus.POTENTIAL],
-                        label: `潜力人选 (${candidateStatusCount[CandidateStatus.POTENTIAL]})`,
-                        color: "#eab308",
-                      },
-                      {
-                        id: 2,
-                        value: candidateStatusCount[CandidateStatus.NOT_SELECTED],
-                        label: `未选中 (${candidateStatusCount[CandidateStatus.NOT_SELECTED]})`,
-                        color: "#eb4444",
-                      },
-                      {
-                        id: 3,
-                        value: candidateStatusCount[CandidateStatus.NO_STATUS],
-                        label: `待筛选 (${candidateStatusCount[CandidateStatus.NO_STATUS]})`,
-                        color: "#9ca3af",
-                      },
-                    ],
-                    highlightScope: { faded: "global", highlighted: "item" },
-                    faded: {
-                      innerRadius: 10,
-                      additionalRadius: -10,
-                      color: "gray",
-                    },
-                  },
-                ]}
-                width={360}
-                height={120}
-                slotProps={{
-                  legend: {
-                    direction: "column",
-                    position: { vertical: "middle", horizontal: "right" },
-                    padding: 0,
-                    itemMarkWidth: 10,
-                    itemMarkHeight: 10,
-                    markGap: 5,
-                    itemGap: 5,
-                  },
-                }}
-              />
-            </div>
-          </div>
         </div>
-      ) : (
-        <div className="w-[85%] h-[60%] flex flex-col items-center justify-center">
-          <div className="flex flex-col items-center">
-            <Image src="/No-Responses.png" alt="暂无面试记录" width={270} height={270} />
-            <p className="text-center text-sm mt-0">请分享给目标候选人</p>
-          </div>
+        <div className="mt-4 max-h-[360px] min-w-0 overflow-auto rounded-xl border border-slate-100 bg-slate-50 p-2 sm:p-3">
+          <DataTable data={metrics.tableData} interviewId={interview?.id || ""} />
         </div>
-      )}
+      </section>
+
+      {/* 统计采用响应式横向条形图，避免固定宽度 SVG 在窄卡片中互相挤压。 */}
+      <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
+        <MetricCard
+          title="平均面试时长"
+          value={convertSecondstoMMSS(metrics.averageDuration)}
+          help="所有已完成面试记录的平均用时，优先采用服务端记录时长。"
+        />
+        <MetricCard
+          title="平均综合评分"
+          value={metrics.averageScore === null ? "暂无评分" : `${metrics.averageScore} 分`}
+          help="只统计已经生成 AI 综合评分的候选人，满分 100 分。"
+        />
+        <DistributionCard
+          title="评分分布"
+          help="按候选人的 AI 综合评分分档；尚未完成评分的记录单独统计。"
+          icon={<StarIcon size={18} />}
+          rows={scoreRows}
+          total={responses.length}
+        />
+        <DistributionCard
+          title="候选人筛选状态"
+          help="按 HR 设置的候选人状态统计，尚未筛选的记录计入待筛选。"
+          icon={<UserCircleIcon size={18} />}
+          rows={statusRows}
+          total={responses.length}
+        />
+      </div>
     </div>
   );
 }

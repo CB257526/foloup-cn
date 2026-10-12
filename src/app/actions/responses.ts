@@ -36,6 +36,21 @@ export async function deleteResponseAction(callId: string): Promise<void> {
   return responsesRepo.deleteResponse(callId);
 }
 
+/** 原子领取评分任务；并发请求中只有一个调用会返回 true。 */
+export async function claimAnalysisAction(callId: string): Promise<boolean> {
+  return responsesRepo.claimAnalysis(callId);
+}
+
+/** 保存评分结果，并把评分状态推进到 completed。 */
+export async function completeAnalysisAction(callId: string, analytics: unknown): Promise<void> {
+  return responsesRepo.completeAnalysis(callId, analytics);
+}
+
+/** 评分失败时释放领取状态，允许后续请求重试。 */
+export async function releaseAnalysisAction(callId: string): Promise<void> {
+  return responsesRepo.releaseAnalysis(callId);
+}
+
 export async function getAllEmailsAction(interviewId: string): Promise<unknown[]> {
   return responsesRepo.getAllEmailAddressesForInterview(interviewId);
 }

@@ -1,5 +1,5 @@
 import fs from "fs";
-import path from "path";
+import path from "node:path";
 import Database from "better-sqlite3";
 
 /**
@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS interview (
     respondents     TEXT,
     question_count  INTEGER,
     response_count  INTEGER,
-    time_duration   TEXT
+    time_duration   TEXT,
+    competency_dimensions TEXT
 );
 
 CREATE TABLE IF NOT EXISTS response (
@@ -57,13 +58,38 @@ CREATE TABLE IF NOT EXISTS response (
     call_id           TEXT,
     candidate_status  TEXT,
     duration          INTEGER,
+    candidate_id      TEXT,
+    started_at        TEXT,
+    ended_at          TEXT,
+    server_duration   INTEGER,
+    expires_at        TEXT,
     transcript        TEXT,
     details           TEXT,
     analytics         TEXT,
     is_analysed       INTEGER NOT NULL DEFAULT 0,
+    analysis_status   TEXT NOT NULL DEFAULT 'idle',
+    analysis_started_at TEXT,
     is_ended          INTEGER NOT NULL DEFAULT 0,
     is_viewed         INTEGER NOT NULL DEFAULT 0,
     tab_switch_count  INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS candidate_invite (
+    id                TEXT PRIMARY KEY,
+    interview_id      TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    email             TEXT NOT NULL,
+    resume_file_name  TEXT NOT NULL,
+    resume_text       TEXT NOT NULL,
+    candidate_description TEXT NOT NULL,
+    questions         TEXT NOT NULL,
+    invite_token      TEXT NOT NULL UNIQUE,
+    status            TEXT NOT NULL DEFAULT 'ready',
+    consent_version   TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at        TEXT,
+    completed_at      TEXT,
+    revoked_at        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS feedback (
@@ -82,10 +108,30 @@ CREATE TABLE IF NOT EXISTS app_setting (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS consent_record (
+    id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+    interview_id               TEXT NOT NULL,
+    candidate_id               TEXT,
+    call_id                    TEXT,
+    candidate_email            TEXT,
+    candidate_name             TEXT,
+    consent_version            TEXT NOT NULL,
+    voice_processing_accepted  INTEGER NOT NULL DEFAULT 0,
+    evaluation_accepted        INTEGER NOT NULL DEFAULT 0,
+    improvement_accepted       INTEGER NOT NULL DEFAULT 0,
+    created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+    withdrawn_at               TEXT,
+    user_agent                 TEXT,
+    ip_hash                    TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_interview_slug    ON interview(readable_slug);
 CREATE INDEX IF NOT EXISTS idx_response_call_id  ON response(call_id);
 CREATE INDEX IF NOT EXISTS idx_response_interview ON response(interview_id);
+CREATE INDEX IF NOT EXISTS idx_candidate_invite_interview ON candidate_invite(interview_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_interview ON feedback(interview_id);
+CREATE INDEX IF NOT EXISTS idx_consent_interview ON consent_record(interview_id);
+CREATE INDEX IF NOT EXISTS idx_consent_call_id ON consent_record(call_id);
 `;
 
 // dev 模式下 Next 会热重载模块，用 globalThis 缓存避免重复打开 / 重复建表
@@ -103,8 +149,65 @@ function open(): Database.Database {
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
   database.exec(SCHEMA);
+  migrate(database);
 
   return database;
+}
+
+/**
+ * 为已经存在的 SQLite 文件补齐新字段。
+ *
+ * `CREATE TABLE IF NOT EXISTS` 不会修改旧表结构，而开发环境中的数据库文件
+ * 通常会跨多个改造阶段复用，因此这里使用固定字段白名单做轻量迁移。
+ * 不执行删除或重命名，避免破坏历史面试数据。
+ */
+function migrate(database: Database.Database): void {
+  const columnsByTable: Record<string, Record<string, string>> = {
+    interview: {
+      competency_dimensions: "TEXT",
+    },
+    response: {
+      candidate_id: "TEXT",
+      started_at: "TEXT",
+      ended_at: "TEXT",
+      server_duration: "INTEGER",
+      expires_at: "TEXT",
+      analysis_status: "TEXT NOT NULL DEFAULT 'idle'",
+      analysis_started_at: "TEXT",
+    },
+    consent_record: {
+      candidate_id: "TEXT",
+    },
+  };
+
+  for (const [table, columns] of Object.entries(columnsByTable)) {
+    const existing = new Set(
+      (database.pragma(`table_info(${table})`) as Array<{ name: string }>).map(
+        (column) => column.name,
+      ),
+    );
+
+    for (const [column, definition] of Object.entries(columns)) {
+      if (!existing.has(column)) {
+        database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+      }
+    }
+  }
+
+  // 仅在历史库没有重复 call_id 时添加物理唯一索引，避免升级失败或删除历史数据。
+  // 会话动作也会使用 SQLite 立即事务，在旧重复数据存在时继续保证新写幂等。
+  const duplicate = database
+    .prepare(
+      `SELECT 1 FROM response WHERE call_id IS NOT NULL
+       GROUP BY call_id HAVING COUNT(*) > 1 LIMIT 1`,
+    )
+    .get();
+  if (!duplicate) {
+    database.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_response_call_id_unique ON response(call_id) WHERE call_id IS NOT NULL",
+    );
+  }
+  database.exec("CREATE INDEX IF NOT EXISTS idx_response_candidate_id ON response(candidate_id)");
 }
 
 export function getDb(): Database.Database {

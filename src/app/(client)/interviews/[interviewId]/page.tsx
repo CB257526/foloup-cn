@@ -1,4 +1,5 @@
 import InterviewDetailView from "@/components/dashboard/interview/interviewDetailView";
+import { getCandidateInvitesForInterview } from "@/lib/data/candidates";
 import { getAllInterviewers } from "@/lib/data/interviewers";
 import { getInterviewById } from "@/lib/data/interviews";
 import { getAllResponses } from "@/lib/data/responses";
@@ -21,10 +22,11 @@ export default async function InterviewHome({ params, searchParams }: Props) {
   const { interviewId } = await params;
   const { call, edit } = await searchParams;
 
-  const [interview, responses, interviewers] = await Promise.all([
+  const [interview, responses, interviewers, candidateInvites] = await Promise.all([
     getInterviewById(interviewId),
     getAllResponses(interviewId),
     getAllInterviewers(),
+    getCandidateInvitesForInterview(interviewId),
   ]);
 
   return (
@@ -37,6 +39,7 @@ export default async function InterviewHome({ params, searchParams }: Props) {
       // 运行时值是 number，可正常序列化给客户端组件；这里只在类型边界上做一次转换。
       responses={responses as unknown as Response[]}
       interviewers={interviewers}
+      candidateInvites={candidateInvites}
     />
   );
 }

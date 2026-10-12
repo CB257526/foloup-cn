@@ -31,9 +31,12 @@ export const generateInterviewAnalytics = async (payload: {
     }
 
     const interviewTranscript = transcript || response.details?.transcript;
-    const questions = interview?.questions || [];
+    const inviteQuestions = response.details?.interview_questions;
+    const questions = Array.isArray(inviteQuestions)
+      ? inviteQuestions.map((question: string) => ({ question }))
+      : interview?.questions || [];
     const mainInterviewQuestions = questions
-      .map((q: Question, index: number) => `${index + 1}. ${q.question}`)
+      .map((q: { question: string }, index: number) => `${index + 1}. ${q.question}`)
       .join("\n");
 
     const prompt = getInterviewAnalyticsPrompt(interviewTranscript, mainInterviewQuestions);
@@ -45,9 +48,13 @@ export const generateInterviewAnalytics = async (payload: {
       maxTokens: ANALYTICS_MAX_TOKENS,
     });
 
-    const analyticsResponse = extractJson<Analytics & { mainInterviewQuestions?: string[] }>(content);
+    const analyticsResponse = extractJson<Analytics & { mainInterviewQuestions?: string[] }>(
+      content,
+    );
 
-    analyticsResponse.mainInterviewQuestions = questions.map((q: Question) => q.question);
+    analyticsResponse.mainInterviewQuestions = questions.map(
+      (q: { question: string }) => q.question,
+    );
 
     return { analytics: analyticsResponse, status: 200 };
   } catch (error) {

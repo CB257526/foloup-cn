@@ -43,20 +43,20 @@ export type ConsentRecord = {
   userAgent: string;
 };
 
-function storageKey(interviewId: string): string {
-  return `${STORAGE_PREFIX}${interviewId}`;
+function storageKey(interviewId: string, scope?: string): string {
+  return `${STORAGE_PREFIX}${scope || interviewId}`;
 }
 
 /**
  * 读取同意记录。localStorage 在隐私模式 / 禁用 cookie 的环境会抛异常，
  * 这里一律吞掉并返回 null（表现为「需要重新同意」——宁可多问一次，不可漏问）。
  */
-export function readConsent(interviewId: string): ConsentRecord | null {
+export function readConsent(interviewId: string, scope?: string): ConsentRecord | null {
   if (!interviewId || typeof window === "undefined") {
     return null;
   }
   try {
-    const raw = window.localStorage.getItem(storageKey(interviewId));
+    const raw = window.localStorage.getItem(storageKey(interviewId, scope));
 
     if (!raw) {
       return null;
@@ -70,12 +70,12 @@ export function readConsent(interviewId: string): ConsentRecord | null {
   }
 }
 
-export function saveConsent(record: ConsentRecord): void {
+export function saveConsent(record: ConsentRecord, scope?: string): void {
   if (typeof window === "undefined") {
     return;
   }
   try {
-    window.localStorage.setItem(storageKey(record.interviewId), JSON.stringify(record));
+    window.localStorage.setItem(storageKey(record.interviewId, scope), JSON.stringify(record));
   } catch {
     // 存不下也不拦人：同意动作仍然发生过（只是刷新后需要再点一次）
   }

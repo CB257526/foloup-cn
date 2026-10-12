@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS interview (
     respondents     TEXT,                     -- JSON 数组
     question_count  INTEGER,
     response_count  INTEGER,
-    time_duration   TEXT
+    time_duration   TEXT,
+    competency_dimensions TEXT             -- JSON 数组，预留给岗位能力维度
 );
 
 CREATE TABLE IF NOT EXISTS response (
@@ -64,13 +65,38 @@ CREATE TABLE IF NOT EXISTS response (
     call_id           TEXT,
     candidate_status  TEXT,
     duration          INTEGER,
+    candidate_id      TEXT,              -- 可空；P0/P1 历史记录不关联专属候选人邀请
+    started_at        TEXT,                  -- 服务端确认接通后的真实开始时间
+    ended_at          TEXT,                  -- 服务端完成动作生成的真实结束时间
+    server_duration   INTEGER,              -- started_at 与 ended_at 的服务端计算秒数
+    expires_at        TEXT,                  -- 服务端根据岗位时长计算的到期时间
     transcript        TEXT,                   -- 逐字稿纯文本（P1 写入）
     details           TEXT,                   -- JSON 透传，数据层不解释结构
     analytics         TEXT,                   -- JSON 透传，数据层不解释结构
     is_analysed       INTEGER NOT NULL DEFAULT 0,
+    analysis_status   TEXT NOT NULL DEFAULT 'idle', -- idle/processing/completed/failed
+    analysis_started_at TEXT,
     is_ended          INTEGER NOT NULL DEFAULT 0,
     is_viewed         INTEGER NOT NULL DEFAULT 0,
     tab_switch_count  INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS candidate_invite (
+    id                TEXT PRIMARY KEY,
+    interview_id      TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    email             TEXT NOT NULL,
+    resume_file_name  TEXT NOT NULL,
+    resume_text       TEXT NOT NULL,          -- 加密后的简历正文
+    candidate_description TEXT NOT NULL,
+    questions         TEXT NOT NULL,          -- 该候选人专属的 JSON 题目快照
+    invite_token      TEXT NOT NULL UNIQUE,   -- 不可猜测的个人面试链接令牌
+    status            TEXT NOT NULL DEFAULT 'ready', -- ready / in_progress / completed / revoked
+    consent_version   TEXT,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+    started_at        TEXT,
+    completed_at      TEXT,
+    revoked_at        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS feedback (
@@ -89,7 +115,28 @@ CREATE TABLE IF NOT EXISTS app_setting (
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS consent_record (
+    id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+    interview_id               TEXT NOT NULL,
+    candidate_id               TEXT,
+    call_id                    TEXT,
+    candidate_email            TEXT,
+    candidate_name             TEXT,
+    consent_version            TEXT NOT NULL,
+    voice_processing_accepted  INTEGER NOT NULL DEFAULT 0,
+    evaluation_accepted        INTEGER NOT NULL DEFAULT 0,
+    improvement_accepted       INTEGER NOT NULL DEFAULT 0,
+    created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+    withdrawn_at               TEXT,
+    user_agent                 TEXT,
+    ip_hash                    TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_interview_slug     ON interview(readable_slug);
 CREATE INDEX IF NOT EXISTS idx_response_call_id   ON response(call_id);
 CREATE INDEX IF NOT EXISTS idx_response_interview ON response(interview_id);
+CREATE INDEX IF NOT EXISTS idx_response_candidate_id ON response(candidate_id);
+CREATE INDEX IF NOT EXISTS idx_candidate_invite_interview ON candidate_invite(interview_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_interview ON feedback(interview_id);
+CREATE INDEX IF NOT EXISTS idx_consent_interview ON consent_record(interview_id);
+CREATE INDEX IF NOT EXISTS idx_consent_call_id ON consent_record(call_id);

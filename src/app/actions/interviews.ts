@@ -10,18 +10,6 @@ import { nanoid } from "nanoid";
 
 type Json = Record<string, unknown>;
 
-/**
- * 保留中文/字母/数字，其余替换为连字符。
- * 注意：tsconfig `target` 是 es5，正则不能用 `u` 标志（TS1501），这里用显式码点区间。
- */
-function slugify(name: unknown): string {
-  return String(name ?? "")
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/[^一-龥a-z0-9-]/g, "")
-    .slice(0, 60);
-}
-
 export async function getAllInterviewsAction(): Promise<unknown[]> {
   return interviewsRepo.getAllInterviews();
 }
@@ -35,19 +23,15 @@ export async function getAllRespondentsAction(interviewId: string): Promise<unkn
 }
 
 export async function createInterviewAction(payload: Json): Promise<unknown> {
-  const baseUrl = process.env.NEXT_PUBLIC_LIVE_URL || "";
-  const urlId = nanoid();
-  const url = `${baseUrl}/call/${urlId}`;
-  const nameSlug = slugify(payload.name);
-
-  // 单租户：不再拼 organization 前缀，slug = 岗位名 + 短随机后缀（避免重名冲突）
-  const readableSlug = `${nameSlug}-${nanoid(6)}`;
+  // 岗位是可复用模板，不在模板保存时生成公共候选人链接。
+  // 每位候选人的唯一令牌只在 HR 确认其简历专属问题后创建。
+  const id = typeof payload.id === "string" && payload.id ? payload.id : nanoid(21);
 
   return interviewsRepo.createInterview({
     ...payload,
-    id: payload.id ?? urlId,
-    url,
-    readable_slug: readableSlug,
+    id,
+    url: null,
+    readable_slug: null,
   });
 }
 

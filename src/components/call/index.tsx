@@ -2,8 +2,8 @@
 
 import { FeedbackForm } from "@/components/call/feedbackForm";
 import {
-  RealtimeVoiceClient,
   type RealtimeStatus,
+  RealtimeVoiceClient,
   type Turn,
 } from "@/components/call/realtimeClient";
 import { TabSwitchWarning, useTabSwitchPrevention } from "@/components/call/tabSwitchPrevention";
@@ -18,13 +18,20 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { DEFAULT_INTERVIEW_DURATION_MINUTES, normalizeInterviewDuration } from "@/lib/constants";
 import { isLightColor, testEmail } from "@/lib/utils";
 import { FeedbackService } from "@/services/feedback.service";
 import { InterviewerService } from "@/services/interviewers.service";
 import { ResponseService } from "@/services/responses.service";
-import { DEFAULT_INTERVIEW_DURATION_MINUTES, normalizeInterviewDuration } from "@/lib/constants";
+import type { PublicCandidateInvite } from "@/types/candidate";
 import type { Interview } from "@/types/interview";
-import type { CallData, FeedbackData, TranscriptTurn } from "@/types/response";
+import type {
+  CallData,
+  CallEndReason,
+  CallSessionFinishResult,
+  FeedbackData,
+  TranscriptTurn,
+} from "@/types/response";
 import axios from "axios";
 import { AlarmClockIcon, ArrowUpRightSquareIcon, CheckCircleIcon, XCircleIcon } from "lucide-react";
 import Image from "next/image";
@@ -49,6 +56,8 @@ import { Card, CardHeader, CardTitle } from "../ui/card";
 
 type CallProps = {
   interview: Interview;
+  /** 候选人专属邀请通过不可猜测的令牌传入，旧岗位公共页面不提供该字段。 */
+  candidate?: PublicCandidateInvite & { token: string };
 };
 
 /** `POST /api/register-call` 的返回：签发一次实时语音会话所需的全部参数 */
@@ -71,18 +80,48 @@ const STATUS_TEXT: Record<RealtimeStatus, string> = {
   error: "连接异常",
 };
 
-function Call({ interview }: CallProps) {
+const END_REASON_TEXT: Record<CallEndReason, string> = {
+  candidate_ended: "候选人主动结束",
+  time_up: "到达面试时长上限",
+  connection_closed: "语音连接中断",
+  error: "通话异常结束",
+};
+
+/**
+ * 连接层在极端网络环境下可能既不 open 也不 error，不能让候选人页面永久停在加载态。
+ * 超时只负责终止浏览器等待，不会创建 response 记录，也不会伪造 started_at。
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function Call({ interview, candidate }: CallProps) {
   /* ── 表单与流程状态 ── */
   const [Loading, setLoading] = useState(false);
   const [isStarted, setIsStarted] = useState(false);
   const [isEnded, setIsEnded] = useState(false);
-  const [email, setEmail] = useState<string>("");
-  const [name, setName] = useState<string>("");
-  const [isValidEmail, setIsValidEmail] = useState<boolean>(false);
+  const [email, setEmail] = useState<string>(candidate?.email ?? "");
+  const [name, setName] = useState<string>(candidate?.name ?? "");
+  const [isValidEmail, setIsValidEmail] = useState<boolean>(
+    Boolean(candidate?.email && testEmail(candidate.email)),
+  );
   const [isOldUser, setIsOldUser] = useState<boolean>(false);
   const [isFeedbackSubmitted, setIsFeedbackSubmitted] = useState(false);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [interviewerImg, setInterviewerImg] = useState("");
+  const [finalSession, setFinalSession] = useState<CallSessionFinishResult | null>(null);
   const [interviewTimeDuration, setInterviewTimeDuration] = useState<string>(
     String(DEFAULT_INTERVIEW_DURATION_MINUTES),
   );
@@ -101,6 +140,9 @@ function Call({ interview }: CallProps) {
   const sessionMetaRef = useRef<{ model: string; voice: string }>({ model: "", voice: "" });
   const savedRef = useRef(false);
   const endedRef = useRef(false);
+  const isStartedRef = useRef(false);
+  const sessionStartPerfRef = useRef<number | null>(null);
+  const sessionDurationMsRef = useRef<number | null>(null);
   const useTestAudioRef = useRef(false);
   const autoStartRef = useRef(false);
   const startConversationRef =
@@ -110,6 +152,10 @@ function Call({ interview }: CallProps) {
   const { tabSwitchCount } = useTabSwitchPrevention();
   const tabSwitchRef = useRef(0);
   tabSwitchRef.current = tabSwitchCount;
+
+  useEffect(() => {
+    isStartedRef.current = isStarted;
+  }, [isStarted]);
 
   /* ── 音频来源：默认麦克风；?voiceInput=file 时用测试音频（自动化验证用） ── */
   useEffect(() => {
@@ -156,7 +202,7 @@ function Call({ interview }: CallProps) {
 
   // 候选人侧文本变化 → 自动滚到底
   useEffect(() => {
-    if (lastUserResponseRef.current) {
+    if (turns.length > 0 && lastUserResponseRef.current) {
       lastUserResponseRef.current.scrollTop = lastUserResponseRef.current.scrollHeight;
     }
   }, [turns]);
@@ -173,7 +219,13 @@ function Call({ interview }: CallProps) {
 
   useEffect(() => {
     const limit = Number(interviewTimeDuration) * 60;
-    if (isStarted && !isEnded && limit > 0 && elapsed >= limit) {
+    const serverDurationMs = sessionDurationMsRef.current;
+    const sessionStartPerf = sessionStartPerfRef.current;
+    const isServerExpired =
+      serverDurationMs !== null && sessionStartPerf !== null
+        ? performance.now() - sessionStartPerf >= serverDurationMs
+        : limit > 0 && elapsed >= limit;
+    if (isStarted && !isEnded && isServerExpired) {
       void finishCall("time_up");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -199,8 +251,11 @@ function Call({ interview }: CallProps) {
     }
   };
 
-  /** 结束通话 → 停音频 → 把转录与指标落库（走 Server Action，不直连数据库） */
-  const finishCall = async (reason: "candidate_ended" | "time_up" | "error") => {
+  /**
+   * 结束通话：先停止浏览器音频，再把客户端快照作为诊断输入提交给服务端。
+   * ended_at、server_duration 和 details 的最终时间字段全部由服务端生成。
+   */
+  const finishCall = async (reason: CallEndReason) => {
     if (endedRef.current) {
       return;
     }
@@ -208,12 +263,9 @@ function Call({ interview }: CallProps) {
 
     const client = clientRef.current;
     const snapshot = client?.snapshot();
-    client?.stop();
 
     const callId = callIdRef.current;
     if (callId && !savedRef.current) {
-      savedRef.current = true;
-
       const transcriptObject: TranscriptTurn[] = (snapshot?.turns ?? []).map((t) => ({
         role: t.role,
         content: t.content,
@@ -223,7 +275,7 @@ function Call({ interview }: CallProps) {
       const transcriptText = transcriptObject
         .map((t) => `${t.role === "agent" ? "AI 面试官" : speakerName}：${t.content}`)
         .join("\n\n");
-      const duration = Math.round(snapshot?.duration ?? elapsed);
+      const clientDuration = Math.round(snapshot?.duration ?? elapsed);
 
       const details: CallData = {
         call_id: callId,
@@ -232,9 +284,13 @@ function Call({ interview }: CallProps) {
         voice: sessionMetaRef.current.voice,
         transcript: transcriptText,
         transcript_object: transcriptObject,
-        duration,
-        started_at: new Date(Date.now() - duration * 1000).toISOString(),
-        ended_at: new Date().toISOString(),
+        candidate_id: candidate?.id,
+        interview_questions: (candidate?.questions ?? interview.questions).map(
+          (question) => question.question,
+        ),
+        // 浏览器时长只作为诊断输入，服务端完成动作会覆盖权威 duration。
+        duration: clientDuration,
+        client_duration: clientDuration,
         end_reason: reason,
         stats: {
           latency_samples: snapshot?.stats.latency_samples ?? [],
@@ -246,26 +302,34 @@ function Call({ interview }: CallProps) {
         },
       };
 
-      await ResponseService.saveResponse(
-        {
+      try {
+        const result = await ResponseService.finishCallSession({
+          callId,
           transcript: transcriptText,
           details,
-          duration,
-          is_ended: true,
-          tab_switch_count: tabSwitchRef.current,
-        },
-        callId,
-      );
+          clientDuration,
+          tabSwitchCount: tabSwitchRef.current,
+          endReason: reason,
+        });
+        savedRef.current = true;
+        setFinalSession(result);
+        client?.stop();
 
-      // 🔗 触发一次 AI 评分（原 Retell webhook → /api/get-call 的链路在删掉 webhook 后消失，
-      //    这里补上触发点；get-call 内部有 is_analysed 幂等判断，重复调用不会重复评分）。
-      //    不 await：评分要几十秒，不能让候选人卡在结束页之前。失败也不影响候选人页面
-      //    （HR 打开应答详情时 callInfo 会再触发一次）。
-      void axios.post("/api/get-call", { id: callId }).catch((error) => {
-        console.error("触发 AI 评分失败：", error);
-      });
+        // 评分异步触发，候选人结束页不等待模型调用；get-call 自身有服务端幂等领取。
+        void axios.post("/api/get-call", { id: callId }).catch((error) => {
+          console.error("触发 AI 评分失败：", error);
+        });
+      } catch (error) {
+        // 服务端拒绝或保存失败时保持实时连接，允许候选人校正状态后再次提交。
+        endedRef.current = false;
+        toast.error(error instanceof Error ? error.message : "面试结果保存失败，请重试");
+        return;
+      }
+    } else {
+      client?.stop();
     }
 
+    // 只有拿到服务端完成结果后才切换到结束页。
     setIsEnded(true);
   };
 
@@ -279,8 +343,10 @@ function Call({ interview }: CallProps) {
         (item) => item.email,
       );
       const isIneligible =
-        oldUserEmails.includes(useEmail) ||
-        Boolean(interview?.respondents?.length && !interview.respondents.includes(useEmail));
+        (!candidate && oldUserEmails.includes(useEmail)) ||
+        Boolean(
+          !candidate && interview?.respondents?.length && !interview.respondents.includes(useEmail),
+        );
 
       if (isIneligible) {
         setIsOldUser(true);
@@ -294,12 +360,18 @@ function Call({ interview }: CallProps) {
         // 注册会话使用和页面倒计时相同的归一化值，避免提示词显示 20 分钟而计时器使用旧空值。
         mins: interviewTimeDuration,
         objective: interview?.objective,
-        questions: interview?.questions.map((q) => q.question).join(", "),
+        // 候选人专属邀请使用已确认的问题；旧岗位链接继续兼容岗位级历史题目。
+        questions: (candidate?.questions ?? interview?.questions ?? []).map(
+          (question, index) => `${index + 1}. ${question.question}`,
+        ),
         name: useName || "候选人",
       };
       const registered = await axios.post<RegisterCallResponse>("/api/register-call", {
         dynamic_data: data,
         interviewer_id: interview?.interviewer_id,
+        interview_id: interview.id,
+        candidate_id: candidate?.id,
+        candidate_invite_token: candidate?.token,
       });
       const cfg = registered.data;
 
@@ -307,21 +379,22 @@ function Call({ interview }: CallProps) {
         throw new Error("服务端未返回有效的会话参数（请确认服务端已配置 QWEN_API_KEY）");
       }
 
-      // ② 建一条应答记录（Server Action）
-      await ResponseService.createResponse({
-        interview_id: interview.id,
-        call_id: cfg.callId,
-        email: useEmail,
-        name: useName,
-      });
-      callIdRef.current = cfg.callId;
-      sessionMetaRef.current = { model: cfg.model, voice: cfg.voice };
-
-      // ③ 建立实时语音会话（浏览器直连平台 WebSocket）
+      // ② 建立实时语音会话（浏览器直连平台 WebSocket）。只有 start 成功返回后，
+      // 才允许向服务端写入 started_at，连接失败不会留下候选人记录。
       const client = new RealtimeVoiceClient({
         onStatus: (next, detail) => {
           setStatus(next);
           setStatusDetail(detail ?? "");
+
+          // 连接成功后的意外断开由服务端完成动作记录，和候选人主动结束走同一条
+          // 幂等路径；手动 stop 触发的 closed 会被 endedRef 拦截。
+          if (
+            (next === "closed" || next === "error") &&
+            isStartedRef.current &&
+            !endedRef.current
+          ) {
+            void finishCall(next === "error" ? "error" : "connection_closed");
+          }
         },
         onTurns: setTurns,
         onSpeaker: setSpeaker,
@@ -331,21 +404,53 @@ function Call({ interview }: CallProps) {
       });
       clientRef.current = client;
 
-      await client.start(
-        {
-          wsUrl: cfg.wsUrl,
-          apiKey: cfg.apiKey,
-          model: cfg.model,
-          voice: cfg.voice,
-          instructions: cfg.instructions,
-          greeting: cfg.greeting,
-          session: cfg.session,
-        },
-        { useTestAudio: useTestAudioRef.current },
+      await withTimeout(
+        client.start(
+          {
+            wsUrl: cfg.wsUrl,
+            apiKey: cfg.apiKey,
+            model: cfg.model,
+            voice: cfg.voice,
+            instructions: cfg.instructions,
+            greeting: cfg.greeting,
+            session: cfg.session,
+          },
+          { useTestAudio: useTestAudioRef.current },
+        ),
+        15_000,
+        "语音连接超时，请检查网络后重试",
       );
 
+      // ③ 语音连接成功后由服务端生成真实开始时间和到期时间。
+      const session = await ResponseService.startCallSession({
+        interviewId: interview.id,
+        callId: cfg.callId,
+        email: useEmail,
+        name: useName,
+        candidateId: candidate?.id,
+        candidateInviteToken: candidate?.token,
+      });
+      if (!session.started) {
+        throw new Error("该语音会话已被占用，请刷新页面后重试");
+      }
+
+      // 这里只用于候选人本地倒计时，服务端的 started_at / expires_at 才是最终依据。
+      sessionStartPerfRef.current = performance.now();
+      sessionDurationMsRef.current =
+        session.startedAt && session.expiresAt
+          ? Math.max(0, Date.parse(session.expiresAt) - Date.parse(session.startedAt))
+          : null;
+      callIdRef.current = cfg.callId;
+      sessionMetaRef.current = { model: cfg.model, voice: cfg.voice };
+
+      isStartedRef.current = true;
       setIsStarted(true);
       setStatus("live");
+
+      // 请求服务端开始动作期间连接也可能意外关闭；开始记录成功后马上完成，不能留下悬空会话。
+      if (client.getStatus() !== "live") {
+        void finishCall("connection_closed");
+      }
     } catch (error) {
       console.error("startConversation failed:", error);
       toast.error(error instanceof Error ? error.message : "无法开始面试，请稍后重试");
@@ -437,25 +542,35 @@ function Call({ interview }: CallProps) {
                       {"\n\n"}注意：切换浏览器标签页会被记录。
                     </p>
                   </div>
-                  {!interview?.is_anonymous && (
-                    <div className="flex flex-col gap-2 justify-center">
-                      <div className="flex justify-center">
-                        <input
-                          value={email}
-                          className="h-fit mx-auto py-2 border-2 rounded-md w-[75%] self-center px-2 border-gray-400 text-sm font-normal"
-                          placeholder="请输入邮箱"
-                          onChange={(e) => setEmail(e.target.value)}
-                        />
-                      </div>
-                      <div className="flex justify-center">
-                        <input
-                          value={name}
-                          className="h-fit mb-4 mx-auto py-2 border-2 rounded-md w-[75%] self-center px-2 border-gray-400 text-sm font-normal"
-                          placeholder="请输入姓名"
-                          onChange={(e) => setName(e.target.value)}
-                        />
-                      </div>
+                  {candidate ? (
+                    <div className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-left text-sm">
+                      <p className="font-medium text-slate-800">本场候选人：{candidate.name}</p>
+                      <p className="mt-0.5 text-slate-500">{candidate.email}</p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        此链接已绑定该候选人，无需再次填写个人信息。
+                      </p>
                     </div>
+                  ) : (
+                    !interview?.is_anonymous && (
+                      <div className="flex flex-col gap-2 justify-center">
+                        <div className="flex justify-center">
+                          <input
+                            value={email}
+                            className="h-fit mx-auto py-2 border-2 rounded-md w-[75%] self-center px-2 border-gray-400 text-sm font-normal"
+                            placeholder="请输入邮箱"
+                            onChange={(e) => setEmail(e.target.value)}
+                          />
+                        </div>
+                        <div className="flex justify-center">
+                          <input
+                            value={name}
+                            className="h-fit mb-4 mx-auto py-2 border-2 rounded-md w-[75%] self-center px-2 border-gray-400 text-sm font-normal"
+                            placeholder="请输入姓名"
+                            onChange={(e) => setName(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    )
                   )}
                 </div>
                 <div className="w-[80%] flex flex-row mx-auto justify-center items-center align-middle">
@@ -465,7 +580,10 @@ function Call({ interview }: CallProps) {
                       backgroundColor: interview.theme_color ?? "#4F46E5",
                       color: isLightColor(interview.theme_color ?? "#4F46E5") ? "black" : "white",
                     }}
-                    disabled={Loading || (!interview?.is_anonymous && (!isValidEmail || !name))}
+                    disabled={
+                      Loading ||
+                      (!candidate && !interview?.is_anonymous && (!isValidEmail || !name))
+                    }
                     onClick={() => startConversationRef.current?.()}
                   >
                     {!Loading ? "开始面试" : <MiniLoader />}
@@ -627,6 +745,22 @@ function Call({ interview }: CallProps) {
                       {"\n"}
                       现在可以关闭这个页面了。
                     </p>
+                    {finalSession && (
+                      <div className="mt-4 border-t border-indigo-100 pt-3 text-center text-sm font-normal">
+                        <p>
+                          服务端记录时长：
+                          <span className="font-semibold">
+                            {formatDuration(finalSession.serverDuration ?? 0)}
+                          </span>
+                        </p>
+                        <p className="mt-1">
+                          结束原因：
+                          <span className="font-semibold">
+                            {END_REASON_TEXT[finalSession.endReason]}
+                          </span>
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   {!isFeedbackSubmitted && (

@@ -1,3 +1,7 @@
+import {
+  deleteCandidatePersonalData,
+  getPublicCandidateInviteByToken,
+} from "@/lib/data/candidates";
 import { getInterviewById } from "@/lib/data/interviews";
 import {
   deleteResponse,
@@ -6,7 +10,12 @@ import {
 } from "@/lib/data/responses";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { formatCnDate, getPrivacyContactEmail, getRetentionMonths, retentionDeadline } from "../consent";
+import {
+  formatCnDate,
+  getPrivacyContactEmail,
+  getRetentionMonths,
+  retentionDeadline,
+} from "../consent";
 
 /**
  * 候选人「数据删除申请 / 自助删除」页（P3 名下，新建页面）
@@ -34,7 +43,13 @@ export const metadata = {
 
 type Props = {
   params: Promise<{ interviewId: string }>;
-  searchParams: Promise<{ done?: string; count?: string; error?: string }>;
+  searchParams: Promise<{
+    done?: string;
+    count?: string;
+    error?: string;
+    interview?: string;
+    candidate?: string;
+  }>;
 };
 
 /** 与候选人页同源的解码逻辑（缺陷 D-1：URL 里的中文岗位名是百分号编码态） */
@@ -59,13 +74,17 @@ export default async function DataRequestPage({ params, searchParams }: Props) {
   const { interviewId: rawId } = await params;
   const interviewId = decodeParam(rawId);
   const resolvedSearchParams = await searchParams;
+  const candidateInvite = await getPublicCandidateInviteByToken(interviewId);
+  const displayInterviewId =
+    candidateInvite?.interview_id ?? resolvedSearchParams.interview ?? interviewId;
 
-  const interview = await getInterviewById(interviewId);
+  const interview = await getInterviewById(displayInterviewId);
   const canonicalId = interview?.id ?? null;
   const months = getRetentionMonths();
   const contactEmail = getPrivacyContactEmail();
   const basePath = `/call/${encodeURIComponent(interviewId)}/data-request`;
   const backHref = `/call/${encodeURIComponent(interview?.readable_slug || interviewId)}`;
+  const isCandidateInvite = Boolean(candidateInvite) || resolvedSearchParams.candidate === "1";
 
   /**
    * 自助删除。邮箱不一致 → 什么都不做（不泄露"该邮箱是否存在"以外的信息）。
@@ -88,6 +107,21 @@ export default async function DataRequestPage({ params, searchParams }: Props) {
     }
     if (!confirmed) {
       redirect(`${basePath}?error=confirm`);
+    }
+
+    if (isCandidateInvite) {
+      if (!candidateInvite) {
+        redirect(
+          `${basePath}?error=invalid&interview=${encodeURIComponent(canonicalId)}&candidate=1`,
+        );
+      }
+      if (email !== candidateInvite.email.trim().toLowerCase()) {
+        redirect(`${basePath}?error=email`);
+      }
+      const deleted = await deleteCandidatePersonalData(candidateInvite.id, canonicalId);
+      redirect(
+        `${basePath}?done=1&count=${deleted}&interview=${encodeURIComponent(canonicalId)}&candidate=1`,
+      );
     }
 
     const rows = await getAllResponses(canonicalId);
@@ -116,11 +150,11 @@ export default async function DataRequestPage({ params, searchParams }: Props) {
       `[P3·候选人数据删除] interview=${canonicalId} email=${email} deleted=${deleted} at=${new Date().toISOString()}`,
     );
 
-    redirect(`${basePath}?done=1&count=${deleted}`);
+    redirect(`${basePath}?done=1&count=${deleted}&interview=${encodeURIComponent(canonicalId)}`);
   }
 
   const errorCode = resolvedSearchParams.error;
-  const errorText = errorCode ? ERROR_TEXT[errorCode] ?? "操作失败，请稍后重试。" : "";
+  const errorText = errorCode ? (ERROR_TEXT[errorCode] ?? "操作失败，请稍后重试。") : "";
   const doneCount = Number(resolvedSearchParams.count ?? "0");
   const isDone = resolvedSearchParams.done === "1";
 
@@ -163,11 +197,23 @@ export default async function DataRequestPage({ params, searchParams }: Props) {
           <section className="mt-5 rounded-lg border border-indigo-100 bg-gray-50 p-4">
             <h2 className="text-sm font-bold text-gray-900">本系统保存了你的什么</h2>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-relaxed text-gray-700">
-              <li>面试对话的<strong>文字转录稿（逐字稿）</strong></li>
-              <li>AI 初筛的<strong>评分与评语</strong></li>
-              <li>你填写的<strong>姓名与邮箱</strong>，以及面试时长等过程指标</li>
+              <li>
+                面试对话的<strong>文字转录稿（逐字稿）</strong>
+              </li>
+              <li>
+                AI 初筛的<strong>评分与评语</strong>
+              </li>
+              <li>
+                你填写的<strong>姓名与邮箱</strong>，以及面试时长等过程指标
+              </li>
+              {isCandidateInvite && (
+                <li>
+                  招聘人员为本次专属面试关联的<strong>简历和个性化问题</strong>
+                </li>
+              )}
               <li className="text-gray-600">
-                本系统<strong>不保存通话录音音频文件</strong>（不做录音存储），因此这里能删除的是文字与评分记录。
+                本系统<strong>不保存通话录音音频文件</strong>
+                （不做录音存储），因此这里能删除的是文字与评分记录。
               </li>
             </ul>
           </section>
@@ -186,47 +232,50 @@ export default async function DataRequestPage({ params, searchParams }: Props) {
           <section className="mt-5 rounded-lg border-2 border-red-200 bg-white p-4">
             <h2 className="text-sm font-bold text-gray-900">立即删除我的面试数据</h2>
             <p className="mt-2 text-sm leading-relaxed text-gray-700">
-              为了确认是你本人，请输入<strong>面试时填写的邮箱</strong>。邮箱不一致时不会删除任何数据。
+              为了确认是你本人，请输入<strong>面试时填写的邮箱</strong>
+              。邮箱不一致时不会删除任何数据。
             </p>
-            <form action={deleteMyData} className="mt-4 space-y-3">
-              <label className="block text-sm font-semibold text-gray-800" htmlFor="email">
-                面试时填写的邮箱
-              </label>
-              <input
-                id="email"
-                name="email"
-                data-testid="delete-email"
-                type="email"
-                required
-                autoComplete="email"
-                inputMode="email"
-                placeholder="name@example.com"
-                className="h-11 w-full rounded-md border-2 border-gray-300 px-3 text-sm font-normal"
-              />
-              <label
-                htmlFor="confirm"
-                className="flex cursor-pointer items-start gap-3 text-sm font-normal leading-relaxed text-gray-800"
-              >
+            {!isDone && (
+              <form action={deleteMyData} className="mt-4 space-y-3">
+                <label className="block text-sm font-semibold text-gray-800" htmlFor="email">
+                  面试时填写的邮箱
+                </label>
                 <input
-                  id="confirm"
-                  name="confirm"
-                  data-testid="delete-confirm"
-                  type="checkbox"
-                  className="mt-[2px] h-5 w-5 shrink-0 accent-red-600"
+                  id="email"
+                  name="email"
+                  data-testid="delete-email"
+                  type="email"
+                  required
+                  autoComplete="email"
+                  inputMode="email"
+                  placeholder="name@example.com"
+                  className="h-11 w-full rounded-md border-2 border-gray-300 px-3 text-sm font-normal"
                 />
-                <span>
-                  我确认这是本人的面试记录，并知悉<strong>删除后无法恢复</strong>，
-                  招聘方将无法再查看这次面试的转录与评分。
-                </span>
-              </label>
-              <button
-                type="submit"
-                data-testid="delete-submit"
-                className="h-11 w-full rounded-lg bg-red-600 text-base font-semibold text-white sm:w-auto sm:px-6"
-              >
-                确认删除我的面试数据（不可恢复）
-              </button>
-            </form>
+                <label
+                  htmlFor="confirm"
+                  className="flex cursor-pointer items-start gap-3 text-sm font-normal leading-relaxed text-gray-800"
+                >
+                  <input
+                    id="confirm"
+                    name="confirm"
+                    data-testid="delete-confirm"
+                    type="checkbox"
+                    className="mt-[2px] h-5 w-5 shrink-0 accent-red-600"
+                  />
+                  <span>
+                    我确认这是本人的面试记录，并知悉<strong>删除后无法恢复</strong>，
+                    招聘方将无法再查看这次面试的转录与评分。
+                  </span>
+                </label>
+                <button
+                  type="submit"
+                  data-testid="delete-submit"
+                  className="h-11 w-full rounded-lg bg-red-600 text-base font-semibold text-white sm:w-auto sm:px-6"
+                >
+                  确认删除我的面试数据（不可恢复）
+                </button>
+              </form>
+            )}
           </section>
 
           {/* ── 人工通道 ── */}

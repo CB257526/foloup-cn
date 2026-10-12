@@ -1,5 +1,5 @@
-import { fromBoolCol, fromJsonCol, getDb, toBoolCol, toJsonCol } from "@/lib/db";
 import { normalizeInterviewDuration } from "@/lib/constants";
+import { fromBoolCol, fromJsonCol, getDb, toBoolCol, toJsonCol } from "@/lib/db";
 import type { Interview } from "@/types/interview";
 
 /**
@@ -143,7 +143,7 @@ export async function createInterview(payload: Record<string, unknown>): Promise
   }
 
   const cols = Object.keys(row);
-  const sql = `INSERT INTO interview (${cols.join(", ")}) VALUES (${cols.map((c) => `?`).join(", ")})`;
+  const sql = `INSERT INTO interview (${cols.join(", ")}) VALUES (${cols.map((c) => "?").join(", ")})`;
 
   const values = cols.map((c) => row[c]) as SqliteBinding[];
   getDb()
@@ -176,7 +176,12 @@ export async function updateInterview(
 
 export async function deleteInterview(id: string): Promise<void> {
   const db = getDb();
-  db.prepare("DELETE FROM interview WHERE id = ?").run(id);
-  db.prepare("DELETE FROM response WHERE interview_id = ?").run(id);
-  db.prepare("DELETE FROM feedback WHERE interview_id = ?").run(id);
+  const remove = db.transaction(() => {
+    db.prepare("DELETE FROM consent_record WHERE interview_id = ?").run(id);
+    db.prepare("DELETE FROM response WHERE interview_id = ?").run(id);
+    db.prepare("DELETE FROM candidate_invite WHERE interview_id = ?").run(id);
+    db.prepare("DELETE FROM feedback WHERE interview_id = ?").run(id);
+    db.prepare("DELETE FROM interview WHERE id = ?").run(id);
+  });
+  remove.immediate();
 }

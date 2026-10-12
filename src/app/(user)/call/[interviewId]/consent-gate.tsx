@@ -1,6 +1,7 @@
 "use client";
 
 import type { Interview } from "@/types/interview";
+import { Loader2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { primeAudioContext } from "./audio-unlock";
@@ -28,7 +29,9 @@ import {
 type ConsentGateProps = {
   interview: Interview;
   /** 候选人完成同意动作后回调（由页面负责落库/落 localStorage 并放行通话组件） */
-  onAgree: (record: ConsentRecord) => void;
+  onAgree: (record: ConsentRecord) => void | Promise<void>;
+  /** 专属链接用于定位候选人个人数据删除入口。 */
+  inviteToken?: string;
 };
 
 type CheckItemProps = {
@@ -58,39 +61,44 @@ function CheckItem({ id, checked, onChange, testId, children }: CheckItemProps) 
   );
 }
 
-export function ConsentGate({ interview, onAgree }: ConsentGateProps) {
+export function ConsentGate({ interview, onAgree, inviteToken }: ConsentGateProps) {
   const [sensitiveAgreed, setSensitiveAgreed] = useState(false);
   const [retentionAgreed, setRetentionAgreed] = useState(false);
   const [optionalImproveAgreed, setOptionalImproveAgreed] = useState(false);
   const [declined, setDeclined] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const themeColor = interview.theme_color || "#4F46E5";
   const months = getRetentionMonths();
   const deadlineText = formatCnDate(retentionDeadline(new Date(), months));
   const contactEmail = getPrivacyContactEmail();
   const dataRequestHref = `/call/${encodeURIComponent(
-    interview.readable_slug || interview.id,
+    inviteToken || interview.readable_slug || interview.id,
   )}/data-request`;
 
   const canAgree = sensitiveAgreed && retentionAgreed;
 
-  const handleAgree = () => {
-    if (!canAgree) {
+  const handleAgree = async () => {
+    if (!canAgree || isSaving) {
       return;
     }
+    setIsSaving(true);
     // iOS Safari：在真实用户手势里预热音频通道（详见 audio-unlock.ts 的说明）
     primeAudioContext();
-
-    onAgree({
-      version: CONSENT_VERSION,
-      interviewId: interview.id,
-      interviewName: interview.name ?? "",
-      agreedAt: new Date().toISOString(),
-      sensitiveDataAgreed: sensitiveAgreed,
-      retentionAgreed: retentionAgreed,
-      optionalImproveAgreed: optionalImproveAgreed,
-      userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
-    });
+    try {
+      await onAgree({
+        version: CONSENT_VERSION,
+        interviewId: interview.id,
+        interviewName: interview.name ?? "",
+        agreedAt: new Date().toISOString(),
+        sensitiveDataAgreed: sensitiveAgreed,
+        retentionAgreed: retentionAgreed,
+        optionalImproveAgreed: optionalImproveAgreed,
+        userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
+      });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   if (declined) {
@@ -151,8 +159,11 @@ export function ConsentGate({ interview, onAgree }: ConsentGateProps) {
             （通义实时语音，域名为境内服务）用于实时识别与语音合成。
           </li>
           <li>
+            本场专属链接已由招聘人员关联到你的简历，并据此生成了面试问题；面试时，相关岗位与简历背景会用于实时追问。
+          </li>
+          <li>
             面试结束后，系统会保存：<strong>文字转录稿（逐字稿）</strong>、AI 初筛评分与评语、
-            面试时长等过程指标，以及你填写的<strong>姓名与邮箱</strong>。
+            面试时长等过程指标，以及本场专属链接所关联的<strong>姓名、邮箱和简历</strong>。
           </li>
           <li>
             本系统<strong>不保存通话录音音频文件</strong>（不做录音存储），只保存文字与评分结果。
@@ -164,8 +175,8 @@ export function ConsentGate({ interview, onAgree }: ConsentGateProps) {
       <section className="mt-4 rounded-lg border-2 border-indigo-200 bg-white p-4">
         <h2 className="text-sm font-bold text-gray-900">关于你的声音（敏感个人信息）</h2>
         <p className="mt-2 text-sm leading-relaxed text-gray-700">
-          按照中国《个人信息保护法》，你的<strong>声音属于敏感个人信息</strong>，
-          处理它需要取得你的<strong>单独同意</strong> —— 所以这一项单独列出来，不与其他内容打包。
+          按照中国《个人信息保护法》，你的<strong>声音属于敏感个人信息</strong>， 处理它需要取得你的
+          <strong>单独同意</strong> —— 所以这一项单独列出来，不与其他内容打包。
           请勾选下面的第一项表示单独同意。
         </p>
       </section>
@@ -241,12 +252,13 @@ export function ConsentGate({ interview, onAgree }: ConsentGateProps) {
         <button
           type="button"
           data-testid="consent-agree"
-          disabled={!canAgree}
-          onClick={handleAgree}
-          className="h-12 w-full rounded-lg text-base font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:w-2/3"
+          disabled={!canAgree || isSaving}
+          onClick={() => void handleAgree()}
+          className="inline-flex h-12 w-full items-center justify-center rounded-lg text-base font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 sm:w-2/3"
           style={{ backgroundColor: themeColor }}
         >
-          同意并开始面试
+          {isSaving ? <Loader2 size={16} className="mr-2 animate-spin" /> : null}
+          {isSaving ? "正在保存同意记录…" : "同意并开始面试"}
         </button>
         <button
           type="button"
