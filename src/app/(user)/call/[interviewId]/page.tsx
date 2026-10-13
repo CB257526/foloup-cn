@@ -12,6 +12,7 @@ import { use, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { primeAudioOnFirstGesture } from "./audio-unlock";
 import { type ConsentRecord, readConsent, saveConsent } from "./consent";
+import { createConsentRecordAction } from "@/app/actions/call-sessions";
 import { ConsentGate } from "./consent-gate";
 import "./candidate-shell.css";
 
@@ -127,7 +128,7 @@ function InterviewInterface({ params }: Props) {
         // 优先按候选人随机令牌查专属邀请；不匹配时才按历史岗位链接兼容读取。
         const invite = await CandidateService.getPublicInviteByToken(interviewId);
         const targetInterviewId = invite?.interview_id ?? interviewId;
-        const response = await InterviewService.getInterviewById(targetInterviewId);
+        const response = await InterviewService.getPublicInterviewById(targetInterviewId);
         if (cancelled) {
           return;
         }
@@ -177,6 +178,17 @@ function InterviewInterface({ params }: Props) {
           consentVersion: record.version,
           voiceProcessingAccepted: record.sensitiveDataAgreed,
           evaluationAccepted: record.retentionAgreed,
+          cameraMonitoringAccepted: record.cameraMonitoringAccepted,
+          improvementAccepted: record.optionalImproveAgreed,
+          userAgent: record.userAgent,
+        });
+      } else {
+        await createConsentRecordAction({
+          interviewId: interview.id,
+          consentVersion: record.version,
+          voiceProcessingAccepted: record.sensitiveDataAgreed,
+          evaluationAccepted: record.retentionAgreed,
+          cameraMonitoringAccepted: record.cameraMonitoringAccepted,
           improvementAccepted: record.optionalImproveAgreed,
           userAgent: record.userAgent,
         });

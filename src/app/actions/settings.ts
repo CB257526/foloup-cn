@@ -2,8 +2,11 @@
 
 import { getAppSettings, getRuntimeAppSettings, saveAppSettings } from "@/lib/data/settings";
 import { type LlmConfig, chatCompletion } from "@/lib/llm";
+import { requireAdmin } from "@/lib/auth/admin";
+import sharp from "sharp";
 
 export async function getAppSettingsAction() {
+  await requireAdmin();
   return getAppSettings();
 }
 
@@ -16,8 +19,12 @@ export async function saveAppSettingsAction(input: {
   llmJsonMode: boolean;
   realtimeModel: string;
   defaultInterviewDuration: number;
+  proctoringEnabled: boolean;
+  proctoringIntervalSeconds: number;
+  proctoringConfidenceThreshold: number;
   apiKey?: string;
 }) {
+  await requireAdmin();
   const baseUrl = new URL(input.llmBaseUrl);
   if (!/^https?:$/.test(baseUrl.protocol)) {
     throw new Error("文本模型接口地址必须使用 HTTP 或 HTTPS。");
@@ -46,6 +53,12 @@ export async function saveAppSettingsAction(input: {
   ) {
     throw new Error("默认面试时长需在 1 至 60 分钟之间。");
   }
+  if (!Number.isInteger(input.proctoringIntervalSeconds) || input.proctoringIntervalSeconds < 5 || input.proctoringIntervalSeconds > 60) {
+    throw new Error("监考截图间隔需在 5 至 60 秒之间。");
+  }
+  if (!Number.isFinite(input.proctoringConfidenceThreshold) || input.proctoringConfidenceThreshold < 0.5 || input.proctoringConfidenceThreshold > 1) {
+    throw new Error("监考置信度阈值需在 0.5 至 1 之间。");
+  }
 
   saveAppSettings(input);
   return getAppSettings();
@@ -60,6 +73,7 @@ export async function testLlmConnectionAction(input?: {
   llmJsonMode: boolean;
   apiKey?: string;
 }) {
+  await requireAdmin();
   const saved = getRuntimeAppSettings();
   const config: Partial<LlmConfig> = {
     baseUrl: input?.llmBaseUrl || saved.llmBaseUrl,
@@ -82,4 +96,23 @@ export async function testLlmConnectionAction(input?: {
   });
 
   return { success: true, message: `已成功连接文本模型 ${config.model}。` };
+}
+
+/** 使用系统当前配置的多模态模型验证图像输入能力。 */
+export async function testLlmVisionAction() {
+  await requireAdmin();
+  const samplePng = await sharp({
+    create: { width: 32, height: 32, channels: 3, background: "#4f46e5" },
+  })
+    .png()
+    .toBuffer();
+  const sample = `data:image/png;base64,${samplePng.toString("base64")}`;
+  await chatCompletion({
+    system: "请根据图片内容回答问题。",
+    user: "图中是否有一个白色圆形？请只回答是或否。",
+    imageDataUrl: sample,
+    maxTokens: 2000,
+    retries: 0,
+  });
+  return { success: true, message: "当前配置的模型已成功接收测试图片。" };
 }

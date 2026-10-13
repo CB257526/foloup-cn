@@ -2,8 +2,9 @@
 
 import { chatCompletion, extractJson } from "@/lib/llm";
 import { SYSTEM_PROMPT, getInterviewAnalyticsPrompt } from "@/lib/prompts/analytics";
-import { InterviewService } from "@/services/interviews.service";
-import { ResponseService } from "@/services/responses.service";
+import { getResponseByCallId } from "@/lib/data/responses";
+import { getInterviewById } from "@/lib/data/interviews";
+import type { ResponseRow } from "@/lib/data/responses";
 import type { Question } from "@/types/interview";
 import type { Analytics } from "@/types/response";
 
@@ -23,15 +24,22 @@ export const generateInterviewAnalytics = async (payload: {
   const { callId, interviewId, transcript } = payload;
 
   try {
-    const response = await ResponseService.getResponseByCallId(callId);
-    const interview = await InterviewService.getInterviewById(interviewId);
+    const response = await getResponseByCallId(callId);
+    const interview = await getInterviewById(interviewId);
+    if (!response) {
+      return { error: "面试记录不存在", status: 404 };
+    }
 
     if (response.analytics) {
       return { analytics: response.analytics as Analytics, status: 200 };
     }
 
-    const interviewTranscript = transcript || response.details?.transcript;
-    const inviteQuestions = response.details?.interview_questions;
+    const details = (response.details && typeof response.details === "object" ? response.details : {}) as {
+      transcript?: string;
+      interview_questions?: unknown;
+    };
+    const interviewTranscript = transcript || details.transcript || "";
+    const inviteQuestions = details.interview_questions;
     const questions = Array.isArray(inviteQuestions)
       ? inviteQuestions.map((question: string) => ({ question }))
       : interview?.questions || [];

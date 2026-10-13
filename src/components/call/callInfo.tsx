@@ -42,12 +42,48 @@ type CallProps = {
   onCandidateStatusChange: (callId: string, newStatus: string) => void;
 };
 
+type ProctorEvidence = {
+  captures: Array<{
+    id: number;
+    captured_at: string;
+    analysis_status: string;
+    violation_type: string | null;
+    confidence: number | null;
+    error_code: string | null;
+    retention_until: string;
+  }>;
+  events: Array<{
+    id: number;
+    event_type: string;
+    capture_id: number;
+    occurred_at: string;
+    confidence: number;
+    summary: string;
+    strike_number: number;
+  }>;
+  serviceEvents: Array<{
+    id: number;
+    occurred_at: string;
+    consecutive_failures: number;
+    error_code: string;
+    message: string;
+  }>;
+};
+
 /** `CallData.end_reason` 的中文说明 */
 const END_REASON_TEXT: Record<string, string> = {
   candidate_ended: "候选人主动结束",
   time_up: "到达面试时长上限",
   connection_closed: "语音连接中断",
   error: "通话异常结束",
+  proctoring_terminated: "因监考规则强制结束",
+};
+
+const PROCTOR_EVENT_TEXT: Record<string, string> = {
+  phone: "疑似手机或平板入镜",
+  absent: "候选人离开画面",
+  multiple_people: "多人入镜",
+  looking_away: "频繁看向屏幕外",
 };
 
 function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallProps) {
@@ -62,6 +98,7 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
   const [candidateStatus, setCandidateStatus] = useState<string>("");
   const [interviewId, setInterviewId] = useState<string>("");
   const [tabSwitchCount, setTabSwitchCount] = useState<number>();
+  const [proctorEvidence, setProctorEvidence] = useState<ProctorEvidence | null>(null);
 
   useEffect(() => {
     const fetchResponses = async () => {
@@ -83,6 +120,21 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
 
     fetchResponses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [call_id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/admin/proctor-evidence?callId=${encodeURIComponent(call_id)}`)
+      .then(async (response) => (response.ok ? (await response.json()) as ProctorEvidence : null))
+      .then((data) => {
+        if (!cancelled) setProctorEvidence(data);
+      })
+      .catch(() => {
+        if (!cancelled) setProctorEvidence(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [call_id]);
 
   useEffect(() => {
@@ -356,6 +408,12 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
                   <span className="font-normal">时长：</span>
                   {call?.duration ? `${Math.round(call.duration)} 秒` : "—"}
                 </div>
+                {call?.end_reason === "proctoring_terminated" && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-red-800">
+                    <p className="font-semibold">因监考规则强制结束</p>
+                    <p className="mt-1 text-xs font-normal">该标签仅供招聘人员人工复核，不自动代表不录用。</p>
+                  </div>
+                )}
                 <div className="font-medium">
                   <span className="font-normal">打断次数：</span>
                   {call?.stats?.interruption_count ?? 0}
@@ -373,6 +431,40 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
                   未保存，仅保留逐字稿和评分
                 </div>
               </div>
+              {proctorEvidence && proctorEvidence.captures.length > 0 && (
+                <div className="mt-3 rounded-2xl bg-amber-50 p-4 text-sm">
+                  <p className="font-semibold">摄像头监考记录（保存 7 天）</p>
+                  {proctorEvidence.events.length > 0 && (
+                    <div className="mt-2 space-y-2">
+                      {proctorEvidence.events.map((event) => (
+                        <div key={event.id} className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-900">
+                          <span className="font-semibold">第 {event.strike_number} 次：</span>
+                          {PROCTOR_EVENT_TEXT[event.event_type] || event.event_type} · {event.summary}
+                          <span className="ml-2 text-xs">置信度 {event.confidence.toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {proctorEvidence.captures.map((capture) => (
+                      <div key={capture.id} className="overflow-hidden rounded-lg border border-amber-200 bg-white">
+                        <img
+                          src={`/api/admin/proctor-captures/${capture.id}`}
+                          alt={`监考截图 ${capture.id}`}
+                          className="aspect-video w-full object-cover"
+                        />
+                        <div className="p-2 text-[11px] text-slate-600">
+                          <p>{new Date(capture.captured_at).toLocaleString("zh-CN")}</p>
+                          <p>{capture.analysis_status === "failed" ? `分析失败：${capture.error_code || "未知错误"}` : capture.violation_type ? PROCTOR_EVENT_TEXT[capture.violation_type] || capture.violation_type : "未检测到违规"}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {proctorEvidence.serviceEvents.length > 0 && (
+                    <p className="mt-3 text-xs text-amber-900">视觉服务故障 {proctorEvidence.serviceEvents.length} 次；面试未因技术故障暂停。</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           {analytics?.questionSummaries && analytics.questionSummaries.length > 0 && (

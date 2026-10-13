@@ -1,6 +1,7 @@
 import { normalizeInterviewDuration } from "@/lib/constants";
 import { fromBoolCol, fromJsonCol, getDb, toBoolCol, toJsonCol } from "@/lib/db";
 import type { Interview } from "@/types/interview";
+import { removeProctorDataForCalls } from "@/lib/data/proctoring";
 
 /**
  * interview 表的服务端仓储（SQLite）。
@@ -122,6 +123,18 @@ export async function getInterviewById(id: string): Promise<Interview | null> {
   }
 }
 
+/** 候选人面试页仅返回面试必需字段，不向公开链接泄露邮箱白名单和后台洞察。 */
+export async function getPublicInterviewById(id: string): Promise<Interview | null> {
+  const interview = await getInterviewById(id);
+  if (!interview) return null;
+  return {
+    ...interview,
+    respondents: [],
+    insights: [],
+    quotes: [],
+  };
+}
+
 export async function getAllRespondents(interviewId: string): Promise<unknown[]> {
   try {
     const row = getDb()
@@ -176,6 +189,9 @@ export async function updateInterview(
 
 export async function deleteInterview(id: string): Promise<void> {
   const db = getDb();
+  const callIds = (db.prepare("SELECT call_id FROM response WHERE interview_id = ? AND call_id IS NOT NULL")
+    .all(id) as Array<{ call_id: string }>).map((row) => row.call_id);
+  removeProctorDataForCalls(callIds);
   const remove = db.transaction(() => {
     db.prepare("DELETE FROM consent_record WHERE interview_id = ?").run(id);
     db.prepare("DELETE FROM response WHERE interview_id = ?").run(id);

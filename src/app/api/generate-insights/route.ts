@@ -4,8 +4,11 @@ import { SYSTEM_PROMPT, createUserPrompt } from "@/lib/prompts/generate-insights
 import { InterviewService } from "@/services/interviews.service";
 import { ResponseService } from "@/services/responses.service";
 import { NextResponse } from "next/server";
+import { getAdminSession } from "@/lib/auth/admin";
 
 export async function POST(req: Request) {
+  const admin = await getAdminSession();
+  if (!admin || admin.mustChangePassword) return NextResponse.json({ error: "需要管理员登录。" }, { status: 401 });
   logger.info("generate-insights request received");
   const body = await req.json();
 

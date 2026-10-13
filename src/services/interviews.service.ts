@@ -4,6 +4,7 @@ import {
   getAllInterviewsAction,
   getAllRespondentsAction,
   getInterviewByIdAction,
+  getPublicInterviewByIdAction,
   updateInterviewAction,
 } from "@/app/actions/interviews";
 import type { Interview } from "@/types/interview";
@@ -37,6 +38,15 @@ const getInterviewById = async (id: string): Promise<Interview> => {
   } catch (error) {
     console.error("[InterviewService] getInterviewById failed:", error);
 
+    return null as unknown as Interview;
+  }
+};
+
+const getPublicInterviewById = async (id: string): Promise<Interview> => {
+  try {
+    return (await getPublicInterviewByIdAction(id)) as Interview;
+  } catch (error) {
+    console.error("[InterviewService] getPublicInterviewById failed:", error);
     return null as unknown as Interview;
   }
 };
@@ -82,6 +92,7 @@ const getAllRespondents = async (interviewId: string): Promise<unknown[]> => {
 export const InterviewService = {
   getAllInterviews,
   getInterviewById,
+  getPublicInterviewById,
   updateInterview,
   deleteInterview,
   getAllRespondents,

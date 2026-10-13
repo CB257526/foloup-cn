@@ -1,6 +1,8 @@
 import { normalizeInterviewDuration } from "@/lib/constants";
 import { markCandidateInviteCompleted, markCandidateInviteStarted } from "@/lib/data/candidates";
 import type { ResponseRow } from "@/lib/data/responses";
+import { createProctorSession } from "@/lib/data/proctoring";
+import { createHash, randomBytes } from "node:crypto";
 import { getDb, toJsonCol } from "@/lib/db";
 import type {
   CallData,
@@ -21,6 +23,7 @@ export type CreateConsentRecordInput = {
   consentVersion: string;
   voiceProcessingAccepted: boolean;
   evaluationAccepted: boolean;
+  cameraMonitoringAccepted: boolean;
   improvementAccepted: boolean;
   userAgent?: string | null;
   ipHash?: string | null;
@@ -73,6 +76,17 @@ export type StartCallSessionInput = {
   candidateInviteToken?: string | null;
 };
 
+function issueCandidateActionToken(callId: string): string {
+  const token = randomBytes(32).toString("base64url");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  getDb().prepare(
+    `INSERT INTO candidate_action_token (call_id, token_hash, expires_at)
+     VALUES (?, ?, ?) ON CONFLICT(call_id) DO UPDATE SET token_hash = excluded.token_hash, expires_at = excluded.expires_at`,
+  ).run(callId, tokenHash, expiresAt);
+  return token;
+}
+
 export type FinishCallSessionInput = {
   callId: string;
   transcript: string;
@@ -94,9 +108,9 @@ export async function createConsentRecord(
     .prepare(
       `INSERT INTO consent_record
        (interview_id, candidate_id, call_id, candidate_email, candidate_name, consent_version,
-        voice_processing_accepted, evaluation_accepted, improvement_accepted,
-        user_agent, ip_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        voice_processing_accepted, evaluation_accepted, camera_monitoring_accepted,
+        improvement_accepted, user_agent, ip_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       input.interviewId,
@@ -107,6 +121,7 @@ export async function createConsentRecord(
       input.consentVersion.trim(),
       input.voiceProcessingAccepted ? 1 : 0,
       input.evaluationAccepted ? 1 : 0,
+      input.cameraMonitoringAccepted ? 1 : 0,
       input.improvementAccepted ? 1 : 0,
       input.userAgent ?? null,
       input.ipHash ?? null,
@@ -258,12 +273,16 @@ export async function startCallSession(
       throw new Error("该 call_id 已经完成，不能重新开始");
     }
 
+    const proctoring = createProctorSession(input.callId);
+    const analysisToken = issueCandidateActionToken(input.callId);
     return {
       response: existing,
       started: Boolean(existing.started_at),
       alreadyStarted: true,
       startedAt: existing.started_at,
       expiresAt: existing.expires_at,
+      proctoring,
+      analysisToken,
     };
   }
 
@@ -353,12 +372,17 @@ export async function startCallSession(
     throw new Error("服务端无法创建面试会话记录");
   }
 
+  const proctoring = createProctorSession(input.callId);
+  const analysisToken = issueCandidateActionToken(input.callId);
+
   return {
     response,
     started: Boolean(response.started_at),
     alreadyStarted: result.alreadyStarted,
     startedAt: response.started_at,
     expiresAt: response.expires_at,
+    proctoring,
+    analysisToken,
   };
 }
 
@@ -489,6 +513,7 @@ function getEndReason(details: unknown, fallback: CallEndReason): CallEndReason 
   return reason === "candidate_ended" ||
     reason === "time_up" ||
     reason === "connection_closed" ||
+    reason === "proctoring_terminated" ||
     reason === "error"
     ? reason
     : fallback;

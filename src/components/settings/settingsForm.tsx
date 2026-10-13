@@ -4,6 +4,7 @@ import {
   getAppSettingsAction,
   saveAppSettingsAction,
   testLlmConnectionAction,
+  testLlmVisionAction,
 } from "@/app/actions/settings";
 import { Button } from "@/components/ui/button";
 import { CheckCircle2, Eye, EyeOff, Loader2, Save, ServerCog } from "lucide-react";
@@ -18,6 +19,9 @@ type SettingsSnapshot = {
   llmJsonMode: boolean;
   realtimeModel: string;
   defaultInterviewDuration: number;
+  proctoringEnabled: boolean;
+  proctoringIntervalSeconds: number;
+  proctoringConfidenceThreshold: number;
   apiKeyConfigured: boolean;
 };
 
@@ -36,6 +40,7 @@ function SettingsForm({ initialSettings }: Props) {
   const [showApiKey, setShowApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testingVision, setTestingVision] = useState(false);
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setSettings((current) => ({ ...current, [key]: value }));
@@ -74,6 +79,18 @@ function SettingsForm({ initialSettings }: Props) {
     }
   };
 
+  const testVisionConnection = async () => {
+    setTestingVision(true);
+    try {
+      const result = await testLlmVisionAction();
+      toast.success(result.message);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "视觉输入测试失败");
+    } finally {
+      setTestingVision(false);
+    }
+  };
+
   return (
     <div className="max-w-5xl space-y-6">
       <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
@@ -88,7 +105,7 @@ function SettingsForm({ initialSettings }: Props) {
             type="button"
             variant="outline"
             onClick={testConnection}
-            disabled={testing || saving}
+            disabled={testing || testingVision || saving}
           >
             {testing ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -100,7 +117,7 @@ function SettingsForm({ initialSettings }: Props) {
           <Button
             type="button"
             onClick={save}
-            disabled={saving || testing}
+            disabled={saving || testing || testingVision}
             className="bg-indigo-600 hover:bg-indigo-700"
           >
             {saving ? (
@@ -200,6 +217,64 @@ function SettingsForm({ initialSettings }: Props) {
           />
           要求模型优先返回结构化 JSON
         </label>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-6">
+        <div className="mb-5 flex items-start gap-3">
+          <div className="rounded-lg bg-amber-50 p-2 text-amber-600">
+            <ServerCog size={20} />
+          </div>
+          <div>
+            <h3 className="font-semibold">摄像头监考</h3>
+            <p className="mt-1 text-sm text-slate-600">
+              候选人摄像头截图会发送给当前配置的 LLM 分析。请使用支持图像输入的多模态模型；不支持图像输入时，检测可能无法正常工作。
+            </p>
+          </div>
+        </div>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">
+          截图会保存在本地服务器 7 天，并发送至当前 LLM 服务商进行分析。视觉输入测试失败只显示警告，不阻止保存或启用。
+        </div>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={settings.proctoringEnabled}
+              onChange={(event) => update("proctoringEnabled", event.target.checked)}
+            />
+            全局启用摄像头监考
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="font-medium">截图间隔（秒）</span>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              type="number"
+              min={5}
+              max={60}
+              step={1}
+              value={settings.proctoringIntervalSeconds}
+              onChange={(event) => update("proctoringIntervalSeconds", Number(event.target.value))}
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="font-medium">违规置信度阈值</span>
+            <input
+              className="w-full rounded-md border px-3 py-2"
+              type="number"
+              min={0.5}
+              max={1}
+              step={0.01}
+              value={settings.proctoringConfidenceThreshold}
+              onChange={(event) => update("proctoringConfidenceThreshold", Number(event.target.value))}
+            />
+          </label>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button type="button" variant="outline" onClick={testVisionConnection} disabled={testingVision || saving || testing}>
+            {testingVision ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ServerCog className="mr-2 h-4 w-4" />}
+            测试视觉输入
+          </Button>
+          <span className="text-xs text-slate-500">测试图片为固定非个人样例。</span>
+        </div>
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:p-6">

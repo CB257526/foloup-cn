@@ -1,4 +1,6 @@
 import { fromBoolCol, fromJsonCol, getDb, toBoolCol, toJsonCol } from "@/lib/db";
+import { createHash } from "node:crypto";
+import { removeProctorDataForCalls } from "@/lib/data/proctoring";
 
 /**
  * response 表的服务端仓储（SQLite）。
@@ -187,6 +189,7 @@ export async function getResponseByCallId(callId: string): Promise<ResponseRow |
 }
 
 export async function deleteResponse(callId: string): Promise<void> {
+  removeProctorDataForCalls([callId]);
   getDb().prepare("DELETE FROM response WHERE call_id = ?").run(callId);
 }
 
@@ -255,4 +258,39 @@ export async function getAllEmailAddressesForInterview(
 
     return [];
   }
+}
+
+/** 公开候选人流程只返回本人邮箱能否参加，不暴露岗位的历史候选人邮箱清单。 */
+export function isCandidateEligibleForInterview(interviewId: string, email: string): boolean {
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!interviewId || !normalizedEmail || normalizedEmail.length > 254) return false;
+  const db = getDb();
+  const interview = db.prepare("SELECT respondents, is_active, is_archived FROM interview WHERE id = ? LIMIT 1")
+    .get(interviewId) as { respondents: string | null; is_active: number; is_archived: number } | undefined;
+  if (!interview || interview.is_active !== 1 || interview.is_archived === 1) return false;
+  let respondents: string[] = [];
+  try {
+    respondents = interview.respondents ? JSON.parse(interview.respondents) as string[] : [];
+  } catch {
+    respondents = [];
+  }
+  if (respondents.length > 0 && !respondents.some((item) => item.trim().toLowerCase() === normalizedEmail)) {
+    return false;
+  }
+  const existing = db.prepare(
+    "SELECT 1 FROM response WHERE interview_id = ? AND lower(email) = ? AND is_ended = 1 LIMIT 1",
+  ).get(interviewId, normalizedEmail);
+  return !existing;
+}
+
+/** 候选人只能凭本场面试的短时令牌触发评分，不能借此读取面试记录或评分内容。 */
+export function verifyCandidateActionToken(callId: string, token: string): boolean {
+  if (!callId || !token || token.length > 100) return false;
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  return Boolean(
+    getDb().prepare(
+      `SELECT 1 FROM candidate_action_token
+       WHERE call_id = ? AND token_hash = ? AND expires_at > ? LIMIT 1`,
+    ).get(callId, tokenHash, new Date().toISOString()),
+  );
 }

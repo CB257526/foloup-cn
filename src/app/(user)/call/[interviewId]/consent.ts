@@ -16,7 +16,7 @@
  */
 
 /** 同意文案版本号：文案一改就要升版本，旧版本记录不再视为有效同意 */
-export const CONSENT_VERSION = "2026-10-11.v1";
+export const CONSENT_VERSION = "2026-10-13.proctor.v1";
 
 /** localStorage 键前缀（按岗位隔离：重开面试链接不必重复同意同一个岗位） */
 const STORAGE_PREFIX = "foloup.consent.";
@@ -37,6 +37,8 @@ export type ConsentRecord = {
   sensitiveDataAgreed: boolean;
   /** ② 已阅读并知悉留存期限与删除方式（必选） */
   retentionAgreed: boolean;
+  /** 单独同意面试期间截取摄像头图片并由当前多模态模型分析 */
+  cameraMonitoringAccepted: boolean;
   /** ③ 可选：去标识化后用于面试流程改进（不勾也能面试） */
   optionalImproveAgreed: boolean;
   /** 设备信息，供人工排查（不用于画像） */

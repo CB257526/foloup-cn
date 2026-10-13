@@ -93,10 +93,25 @@ export interface CallData {
   candidate_id?: string;
   interview_questions?: string[];
   stats?: RealtimeStats;
+  proctoring?: {
+    enabled: boolean;
+    interval_seconds: number;
+    confidence_threshold: number;
+    strike_count: number;
+    terminated: boolean;
+    captures?: Array<Record<string, unknown>>;
+    events?: Array<Record<string, unknown>>;
+    serviceEvents?: Array<Record<string, unknown>>;
+  };
 }
 
 /** 候选人结束面试时允许提交的原因；最终原因仍由服务端校正。 */
-export type CallEndReason = "candidate_ended" | "time_up" | "connection_closed" | "error";
+export type CallEndReason =
+  | "candidate_ended"
+  | "time_up"
+  | "connection_closed"
+  | "proctoring_terminated"
+  | "error";
 
 /** 实时语音接通后的服务端开始结果。 */
 export interface CallSessionStartResult {
@@ -105,6 +120,13 @@ export interface CallSessionStartResult {
   alreadyStarted: boolean;
   startedAt: string | null;
   expiresAt: string | null;
+  proctoring: {
+    enabled: boolean;
+    token: string;
+    intervalSeconds: number;
+    confidenceThreshold: number;
+  };
+  analysisToken: string;
 }
 
 /** 服务端幂等完成结果；alreadyEnded=true 表示复用了第一次完成结果。 */
@@ -128,6 +150,7 @@ export interface ConsentRecord {
   consent_version: string;
   voice_processing_accepted: boolean;
   evaluation_accepted: boolean;
+  camera_monitoring_accepted: boolean;
   improvement_accepted: boolean;
   created_at: string;
   withdrawn_at: string | null;

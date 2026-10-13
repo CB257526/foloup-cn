@@ -125,11 +125,104 @@ CREATE TABLE IF NOT EXISTS consent_record (
     consent_version            TEXT NOT NULL,
     voice_processing_accepted  INTEGER NOT NULL DEFAULT 0,
     evaluation_accepted        INTEGER NOT NULL DEFAULT 0,
+    camera_monitoring_accepted INTEGER NOT NULL DEFAULT 0,
     improvement_accepted       INTEGER NOT NULL DEFAULT 0,
     created_at                 TEXT NOT NULL DEFAULT (datetime('now')),
     withdrawn_at               TEXT,
     user_agent                 TEXT,
     ip_hash                    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS admin_account (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    username              TEXT NOT NULL UNIQUE,
+    password_hash         TEXT NOT NULL,
+    password_salt         TEXT NOT NULL,
+    must_change_password  INTEGER NOT NULL DEFAULT 1,
+    is_active             INTEGER NOT NULL DEFAULT 1,
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login_at         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS auth_session (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_id       INTEGER NOT NULL,
+    token_hash     TEXT NOT NULL UNIQUE,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at     TEXT NOT NULL,
+    revoked_at     TEXT,
+    FOREIGN KEY (admin_id) REFERENCES admin_account(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS candidate_action_token (
+    call_id       TEXT PRIMARY KEY,
+    token_hash    TEXT NOT NULL,
+    expires_at    TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS proctor_session (
+    call_id                   TEXT PRIMARY KEY,
+    token_hash                TEXT NOT NULL,
+    enabled                   INTEGER NOT NULL DEFAULT 1,
+    interval_seconds          INTEGER NOT NULL DEFAULT 30,
+    confidence_threshold      REAL NOT NULL DEFAULT 0.85,
+    consecutive_failures      INTEGER NOT NULL DEFAULT 0,
+    last_capture_at           TEXT,
+    created_at                TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS proctor_capture (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    call_id           TEXT NOT NULL,
+    captured_at       TEXT NOT NULL DEFAULT (datetime('now')),
+    storage_path      TEXT NOT NULL,
+    mime_type         TEXT NOT NULL,
+    byte_size         INTEGER NOT NULL,
+    analysis_status   TEXT NOT NULL DEFAULT 'pending',
+    analysis_result   TEXT,
+    violation_type    TEXT,
+    confidence        REAL,
+    error_code        TEXT,
+    retention_until   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS proctor_event (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    call_id        TEXT NOT NULL,
+    capture_id     INTEGER NOT NULL,
+    event_type     TEXT NOT NULL,
+    occurred_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    confidence     REAL NOT NULL,
+    summary        TEXT NOT NULL,
+    strike_number  INTEGER NOT NULL,
+    FOREIGN KEY (capture_id) REFERENCES proctor_capture(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS proctor_violation_state (
+    call_id          TEXT NOT NULL,
+    event_type       TEXT NOT NULL,
+    is_active        INTEGER NOT NULL DEFAULT 1,
+    normal_since     TEXT,
+    last_detected_at TEXT NOT NULL,
+    PRIMARY KEY (call_id, event_type)
+);
+
+CREATE TABLE IF NOT EXISTS proctor_gaze_signal (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    call_id      TEXT NOT NULL,
+    capture_id   INTEGER NOT NULL,
+    occurred_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (capture_id) REFERENCES proctor_capture(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS proctor_service_event (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    call_id               TEXT NOT NULL,
+    occurred_at           TEXT NOT NULL DEFAULT (datetime('now')),
+    consecutive_failures  INTEGER NOT NULL,
+    error_code             TEXT NOT NULL,
+    message                TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_interview_slug     ON interview(readable_slug);
@@ -140,3 +233,9 @@ CREATE INDEX IF NOT EXISTS idx_candidate_invite_interview ON candidate_invite(in
 CREATE INDEX IF NOT EXISTS idx_feedback_interview ON feedback(interview_id);
 CREATE INDEX IF NOT EXISTS idx_consent_interview ON consent_record(interview_id);
 CREATE INDEX IF NOT EXISTS idx_consent_call_id ON consent_record(call_id);
+CREATE INDEX IF NOT EXISTS idx_auth_session_token ON auth_session(token_hash);
+CREATE INDEX IF NOT EXISTS idx_auth_session_admin ON auth_session(admin_id);
+CREATE INDEX IF NOT EXISTS idx_proctor_capture_call ON proctor_capture(call_id, captured_at);
+CREATE INDEX IF NOT EXISTS idx_proctor_event_call ON proctor_event(call_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_proctor_service_call ON proctor_service_event(call_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_proctor_gaze_call_time ON proctor_gaze_signal(call_id, occurred_at);

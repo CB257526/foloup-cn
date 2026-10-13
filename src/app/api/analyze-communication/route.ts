@@ -5,6 +5,7 @@ import {
   getCommunicationAnalysisPrompt,
 } from "@/lib/prompts/communication-analysis";
 import { NextResponse } from "next/server";
+import { getAdminSession } from "@/lib/auth/admin";
 
 /**
  * 沟通分析要输出多条「原句 + 分析」，比出题长得多。
@@ -15,6 +16,8 @@ import { NextResponse } from "next/server";
 const COMMUNICATION_MAX_TOKENS = 8000;
 
 export async function POST(req: Request) {
+  const admin = await getAdminSession();
+  if (!admin || admin.mustChangePassword) return NextResponse.json({ error: "需要管理员登录。" }, { status: 401 });
   logger.info("analyze-communication request received");
 
   try {

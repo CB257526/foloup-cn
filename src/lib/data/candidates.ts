@@ -6,6 +6,7 @@ import type {
   PublicCandidateInvite,
 } from "@/types/candidate";
 import type { Question } from "@/types/interview";
+import { removeProctorDataForCalls } from "@/lib/data/proctoring";
 
 export type CandidateInviteListItem = Omit<CandidateInvite, "resume_text" | "questions"> & {
   response_duration: number | null;
@@ -274,6 +275,7 @@ export async function recordCandidateConsent(input: {
   consentVersion: string;
   voiceProcessingAccepted: boolean;
   evaluationAccepted: boolean;
+  cameraMonitoringAccepted: boolean;
   improvementAccepted: boolean;
   userAgent?: string | null;
 }): Promise<{ id: number; createdAt: string }> {
@@ -299,8 +301,9 @@ export async function recordCandidateConsent(input: {
       .prepare(
         `INSERT INTO consent_record
          (interview_id, candidate_id, candidate_email, candidate_name, consent_version,
-          voice_processing_accepted, evaluation_accepted, improvement_accepted, user_agent)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          voice_processing_accepted, evaluation_accepted, camera_monitoring_accepted,
+          improvement_accepted, user_agent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.interviewId,
@@ -310,6 +313,7 @@ export async function recordCandidateConsent(input: {
         input.consentVersion.trim(),
         input.voiceProcessingAccepted ? 1 : 0,
         input.evaluationAccepted ? 1 : 0,
+        input.cameraMonitoringAccepted ? 1 : 0,
         input.improvementAccepted ? 1 : 0,
         input.userAgent ?? null,
       );
@@ -327,6 +331,9 @@ export async function deleteCandidatePersonalData(
   interviewId: string,
 ): Promise<number> {
   const db = getDb();
+  const callIds = (db.prepare("SELECT call_id FROM response WHERE candidate_id = ? AND interview_id = ? AND call_id IS NOT NULL")
+    .all(id, interviewId) as Array<{ call_id: string }>).map((row) => row.call_id);
+  removeProctorDataForCalls(callIds);
   const remove = db.transaction(() => {
     const exists = db
       .prepare("SELECT 1 FROM candidate_invite WHERE id = ? AND interview_id = ? LIMIT 1")

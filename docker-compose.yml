@@ -7,4 +7,9 @@ services:
       - .env
     environment:
       - NODE_ENV=production
+    volumes:
+      - foloup-data:/app/data
     restart: unless-stopped
+
+volumes:
+  foloup-data:

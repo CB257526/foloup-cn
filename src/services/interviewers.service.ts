@@ -3,6 +3,7 @@ import {
   ensureDefaultInterviewersAction,
   getAllInterviewersAction,
   getInterviewerAction,
+  getPublicInterviewerAction,
 } from "@/app/actions/interviewers";
 import type { Interviewer } from "@/types/interviewer";
 
@@ -48,6 +49,15 @@ const getInterviewer = async (interviewerId: number | bigint): Promise<Interview
   }
 };
 
+const getPublicInterviewer = async (interviewerId: number | bigint): Promise<Pick<Interviewer, "id" | "name" | "image"> | null> => {
+  try {
+    return (await getPublicInterviewerAction(Number(interviewerId))) as Pick<Interviewer, "id" | "name" | "image"> | null;
+  } catch (error) {
+    console.error("[InterviewerService] getPublicInterviewer failed:", error);
+    return null;
+  }
+};
+
 /** 建两个默认面试官。替代原 `/api/create-interviewer`（Retell 版）。 */
 const ensureDefaultInterviewers = async (): Promise<Interviewer[]> => {
   try {
@@ -63,5 +73,6 @@ export const InterviewerService = {
   getAllInterviewers,
   createInterviewer,
   getInterviewer,
+  getPublicInterviewer,
   ensureDefaultInterviewers,
 };

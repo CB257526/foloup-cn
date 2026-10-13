@@ -34,6 +34,7 @@ export const CandidateService = {
     consentVersion: string;
     voiceProcessingAccepted: boolean;
     evaluationAccepted: boolean;
+    cameraMonitoringAccepted: boolean;
     improvementAccepted: boolean;
     userAgent?: string | null;
   }) {

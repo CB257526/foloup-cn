@@ -2,12 +2,15 @@ import { chatCompletion } from "@/lib/llm";
 import { logger } from "@/lib/logger";
 import { SYSTEM_PROMPT, generateQuestionsPrompt } from "@/lib/prompts/generate-questions";
 import { NextResponse } from "next/server";
+import { getAdminSession } from "@/lib/auth/admin";
 
 // 出题要点：平台 LLM 的默认超时是 50s，正好卡在本路由的 60s 上限之内。
 // 实测出题耗时：deepseek-v4.1-flash ≈2.3s / qwen-max ≈3.4s / glm-5 ≈12.6s / deepseek-v4-pro ≈35s。
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
+  const admin = await getAdminSession();
+  if (!admin || admin.mustChangePassword) return NextResponse.json({ error: "需要管理员登录。" }, { status: 401 });
   logger.info("generate-interview-questions request received");
   const body = await req.json();
 

@@ -11,8 +11,9 @@ import {
 import { getCandidateRegistrationContextByToken } from "@/lib/data/candidates";
 import { getRuntimeAppSettings } from "@/lib/data/settings";
 import { logger } from "@/lib/logger";
-import { InterviewerService } from "@/services/interviewers.service";
-import { InterviewService } from "@/services/interviews.service";
+import { getInterviewer } from "@/lib/data/interviewers";
+import { isCandidateEligibleForInterview } from "@/lib/data/responses";
+import { getInterviewById } from "@/lib/data/interviews";
 import { NextResponse } from "next/server";
 
 /**
@@ -30,6 +31,7 @@ type DynamicData = {
   objective?: string;
   questions?: string | string[];
   name?: string;
+  email?: string;
 };
 
 type RegisterBody = {
@@ -73,7 +75,7 @@ export async function POST(req: Request) {
   let interviewerId = Number(body.interviewer_id ?? 0);
 
   if (!body.candidate_id && body.interview_id) {
-    const legacyInterview = await InterviewService.getInterviewById(body.interview_id);
+    const legacyInterview = await getInterviewById(body.interview_id);
     if (!legacyInterview || legacyInterview.id !== body.interview_id) {
       return NextResponse.json({ error: "岗位不存在" }, { status: 404 });
     }
@@ -82,6 +84,9 @@ export async function POST(req: Request) {
         { error: "该岗位为通用模板，请使用 HR 创建的候选人专属链接" },
         { status: 409 },
       );
+    }
+    if (requestedData.email && !isCandidateEligibleForInterview(body.interview_id, requestedData.email)) {
+      return NextResponse.json({ error: "该邮箱已完成面试，或不在本次面试邀请范围内。" }, { status: 409 });
     }
   }
 
@@ -96,7 +101,7 @@ export async function POST(req: Request) {
     if (!candidate || candidate.id !== body.candidate_id) {
       return NextResponse.json({ error: "候选人专属链接已撤销或已失效" }, { status: 410 });
     }
-    const interview = await InterviewService.getInterviewById(body.interview_id);
+    const interview = await getInterviewById(body.interview_id);
     if (!interview || interview.id !== candidate.interview_id || !interview.is_active) {
       return NextResponse.json({ error: "该岗位当前不可参加面试" }, { status: 410 });
     }
@@ -114,7 +119,7 @@ export async function POST(req: Request) {
   // 面试官人设决定音色。查不到就用默认音色 —— 音色填错会被服务端直接掐断连接。
   let voice = DEFAULT_VOICE;
   try {
-    const interviewer = await InterviewerService.getInterviewer(interviewerId);
+    const interviewer = await getInterviewer(interviewerId);
     voice = getVoiceForInterviewer(interviewer?.name);
   } catch (error) {
     logger.error("register-call: 读取面试官失败，回落默认音色");

@@ -64,6 +64,7 @@ function CheckItem({ id, checked, onChange, testId, children }: CheckItemProps) 
 export function ConsentGate({ interview, onAgree, inviteToken }: ConsentGateProps) {
   const [sensitiveAgreed, setSensitiveAgreed] = useState(false);
   const [retentionAgreed, setRetentionAgreed] = useState(false);
+  const [cameraMonitoringAgreed, setCameraMonitoringAgreed] = useState(false);
   const [optionalImproveAgreed, setOptionalImproveAgreed] = useState(false);
   const [declined, setDeclined] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -76,7 +77,7 @@ export function ConsentGate({ interview, onAgree, inviteToken }: ConsentGateProp
     inviteToken || interview.readable_slug || interview.id,
   )}/data-request`;
 
-  const canAgree = sensitiveAgreed && retentionAgreed;
+  const canAgree = sensitiveAgreed && retentionAgreed && cameraMonitoringAgreed;
 
   const handleAgree = async () => {
     if (!canAgree || isSaving) {
@@ -93,6 +94,7 @@ export function ConsentGate({ interview, onAgree, inviteToken }: ConsentGateProp
         agreedAt: new Date().toISOString(),
         sensitiveDataAgreed: sensitiveAgreed,
         retentionAgreed: retentionAgreed,
+        cameraMonitoringAccepted: cameraMonitoringAgreed,
         optionalImproveAgreed: optionalImproveAgreed,
         userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
       });
@@ -147,7 +149,7 @@ export function ConsentGate({ interview, onAgree, inviteToken }: ConsentGateProp
       </p>
       <h1 className="mt-1 text-xl font-bold leading-snug sm:text-2xl">面试前请阅读并同意</h1>
       <p className="mt-3 text-sm leading-relaxed text-gray-700">
-        本次面试由 AI 面试官通过语音与你交流。开始之前，请阅读下面的说明，并分别确认两项同意。
+        本次面试由 AI 面试官通过语音与你交流，并启用摄像头监考。开始之前，请阅读下面的说明，并确认三项必选内容。
       </p>
 
       {/* ── 处理内容 ── */}
@@ -168,7 +170,17 @@ export function ConsentGate({ interview, onAgree, inviteToken }: ConsentGateProp
           <li>
             本系统<strong>不保存通话录音音频文件</strong>（不做录音存储），只保存文字与评分结果。
           </li>
+          <li>
+            面试期间摄像头会按设定间隔截取静态图片，并发送给当前配置的多模态 LLM 分析；图片保存在本地服务器 7 天，不录制连续视频。
+          </li>
         </ul>
+      </section>
+
+      <section className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4">
+        <h2 className="text-sm font-bold text-gray-900">关于摄像头监考与自动中止</h2>
+        <p className="mt-2 text-sm leading-relaxed text-gray-700">
+          系统可能分析手机入镜、离开画面、多人入镜或频繁看向屏幕外等风险信号。每次确认的风险事件都会提示你；累计三次后，本场面试会自动结束。该提示仅供招聘人员人工复核，不会单独决定录用结果。模型分析故障不会中止面试，但相关截图和故障会保存并供管理员查看。
+        </p>
       </section>
 
       {/* ── 敏感个人信息：单独同意 ── */}
@@ -226,6 +238,16 @@ export function ConsentGate({ interview, onAgree, inviteToken }: ConsentGateProp
         </CheckItem>
 
         <CheckItem
+          id="consent-camera-monitoring"
+          testId="consent-check-camera-monitoring"
+          checked={cameraMonitoringAgreed}
+          onChange={setCameraMonitoringAgreed}
+        >
+          <span className="font-semibold">我单独同意摄像头监考</span>
+          ：我知悉面试期间会按设定间隔截取摄像头静态图片，发送给当前配置的 LLM 服务分析并在本地保存 7 天；风险事件由招聘人员人工复核。
+        </CheckItem>
+
+        <CheckItem
           id="consent-retention"
           testId="consent-check-retention"
           checked={retentionAgreed}
@@ -272,7 +294,7 @@ export function ConsentGate({ interview, onAgree, inviteToken }: ConsentGateProp
       </div>
 
       <p className="mt-3 text-xs leading-relaxed text-gray-500">
-        两处必选项都勾选后才能开始面试。同意文案版本：{CONSENT_VERSION}。
+        三项必选内容都确认后才能开始面试。同意文案版本：{CONSENT_VERSION}。
       </p>
     </div>
   );

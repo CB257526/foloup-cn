@@ -72,6 +72,13 @@ type RegisterCallResponse = {
   session?: Record<string, unknown>;
 };
 
+type ProctorSessionConfig = {
+  enabled: boolean;
+  token: string;
+  intervalSeconds: number;
+  confidenceThreshold: number;
+};
+
 const STATUS_TEXT: Record<RealtimeStatus, string> = {
   idle: "未连接",
   connecting: "正在连接语音服务…",
@@ -84,7 +91,15 @@ const END_REASON_TEXT: Record<CallEndReason, string> = {
   candidate_ended: "候选人主动结束",
   time_up: "到达面试时长上限",
   connection_closed: "语音连接中断",
+  proctoring_terminated: "因监考规则强制结束",
   error: "通话异常结束",
+};
+
+const PROCTOR_EVENT_TEXT: Record<string, string> = {
+  phone: "疑似手机或平板入镜",
+  absent: "候选人暂时离开画面",
+  multiple_people: "检测到多人入镜",
+  looking_away: "检测到频繁看向屏幕外",
 };
 
 /**
@@ -134,9 +149,12 @@ function Call({ interview, candidate }: CallProps) {
   const [level, setLevel] = useState(0);
   const [latency, setLatency] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [proctorNotice, setProctorNotice] = useState("");
 
   const clientRef = useRef<RealtimeVoiceClient | null>(null);
   const callIdRef = useRef<string>("");
+  const analysisTokenRef = useRef<string>("");
   const sessionMetaRef = useRef<{ model: string; voice: string }>({ model: "", voice: "" });
   const savedRef = useRef(false);
   const endedRef = useRef(false);
@@ -148,6 +166,12 @@ function Call({ interview, candidate }: CallProps) {
   const startConversationRef =
     useRef<(override?: { email?: string; name?: string }) => Promise<void>>();
   const lastUserResponseRef = useRef<HTMLDivElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const proctorVideoRef = useRef<HTMLVideoElement | null>(null);
+  const proctorSessionRef = useRef<ProctorSessionConfig | null>(null);
+  const proctorInFlightRef = useRef(false);
+  const proctorTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const { tabSwitchCount } = useTabSwitchPrevention();
   const tabSwitchRef = useRef(0);
@@ -193,7 +217,7 @@ function Call({ interview, candidate }: CallProps) {
   useEffect(() => {
     const fetchInterviewer = async () => {
       // 门面层编译期声明为非空，但查不到时运行时会返回 null —— 这里必须判空
-      const interviewer = await InterviewerService.getInterviewer(interview.interviewer_id);
+      const interviewer = await InterviewerService.getPublicInterviewer(interview.interviewer_id);
       setInterviewerImg(interviewer?.image ?? "");
     };
     fetchInterviewer();
@@ -231,6 +255,103 @@ function Call({ interview, candidate }: CallProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [elapsed, isStarted, isEnded, interviewTimeDuration]);
 
+  const stopProctoring = () => {
+    if (proctorTimerRef.current) {
+      clearInterval(proctorTimerRef.current);
+      proctorTimerRef.current = null;
+    }
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    proctorSessionRef.current = null;
+    setCameraStream(null);
+    if (proctorVideoRef.current) proctorVideoRef.current.srcObject = null;
+  };
+
+  const captureProctorFrame = async () => {
+    const session = proctorSessionRef.current;
+    const video = proctorVideoRef.current;
+    if (!session?.enabled || !session.token || !video || proctorInFlightRef.current) return;
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth < 1) return;
+
+    proctorInFlightRef.current = true;
+    try {
+      const canvas = captureCanvasRef.current || document.createElement("canvas");
+      captureCanvasRef.current = canvas;
+      const targetWidth = Math.min(640, video.videoWidth);
+      const targetHeight = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * targetWidth));
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const context = canvas.getContext("2d", { alpha: false });
+      if (!context) throw new Error("无法读取摄像头画面。");
+      context.drawImage(video, 0, 0, targetWidth, targetHeight);
+      const imageDataUrl = canvas.toDataURL("image/jpeg", 0.62);
+      const snapshot = clientRef.current?.snapshot();
+      const transcript = (snapshot?.turns ?? []).map((turn) => ({
+        role: turn.role,
+        content: turn.content,
+        offset_ms: turn.offset_ms,
+      }));
+      const response = await axios.post("/api/proctor/analyze", {
+        callId: callIdRef.current,
+        token: session.token,
+        imageDataUrl,
+        transcript,
+      });
+      const result = response.data as {
+        event?: { type: string; summary: string } | null;
+        strikeCount?: number;
+        maxStrikes?: number;
+        terminated?: boolean;
+        consecutiveFailures?: number;
+        status?: string;
+      };
+      if (result.event && result.strikeCount) {
+        const label = PROCTOR_EVENT_TEXT[result.event.type] || "监考风险";
+        setProctorNotice(`监考提醒 ${result.strikeCount}/${result.maxStrikes ?? 3}：${label}。${result.event.summary}`);
+        toast.warning(`监考提醒 ${result.strikeCount}/${result.maxStrikes ?? 3}`, {
+          description: `${label}：${result.event.summary}`,
+          duration: 8000,
+        });
+      } else if (result.status === "clear") {
+        setProctorNotice("");
+      }
+      if ((result.consecutiveFailures ?? 0) === 3) {
+        setProctorNotice("视觉分析暂不可用，截图已保存，面试会继续进行，相关记录将由招聘人员人工复核。");
+      }
+      if (result.terminated) {
+        setProctorNotice("累计监考风险事件已达到上限，本场面试已结束。");
+        await finishCall("proctoring_terminated");
+      }
+    } catch (error) {
+      const statusCode = axios.isAxiosError(error) ? error.response?.status : undefined;
+      if (statusCode !== 429) {
+        console.error("摄像头截图分析失败：", error instanceof Error ? error.message : String(error));
+        setProctorNotice("摄像头截图暂时无法分析，面试会继续进行；请保持摄像头开启。");
+      }
+    } finally {
+      proctorInFlightRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    if (!isStarted || isEnded || !proctorSessionRef.current?.enabled) return;
+    const interval = Math.max(5, proctorSessionRef.current.intervalSeconds) * 1000;
+    void captureProctorFrame();
+    proctorTimerRef.current = setInterval(() => void captureProctorFrame(), interval);
+    return () => {
+      if (proctorTimerRef.current) clearInterval(proctorTimerRef.current);
+      proctorTimerRef.current = null;
+    };
+  }, [isStarted, isEnded]);
+
+  useEffect(() => {
+    if (!cameraStream || !proctorVideoRef.current) return;
+    proctorVideoRef.current.srcObject = cameraStream;
+    void proctorVideoRef.current.play().catch(() => {
+      setProctorNotice("摄像头预览未能自动播放，但截图监考仍会尝试继续。");
+    });
+  }, [cameraStream]);
+
   const handleFeedbackSubmit = async (formData: Omit<FeedbackData, "interview_id">) => {
     try {
       const result = await FeedbackService.submitFeedback({
@@ -260,6 +381,7 @@ function Call({ interview, candidate }: CallProps) {
       return;
     }
     endedRef.current = true;
+    stopProctoring();
 
     const client = clientRef.current;
     const snapshot = client?.snapshot();
@@ -316,7 +438,7 @@ function Call({ interview, candidate }: CallProps) {
         client?.stop();
 
         // 评分异步触发，候选人结束页不等待模型调用；get-call 自身有服务端幂等领取。
-        void axios.post("/api/get-call", { id: callId }).catch((error) => {
+        void axios.post("/api/get-call", { id: callId, token: analysisTokenRef.current }).catch((error) => {
           console.error("触发 AI 评分失败：", error);
         });
       } catch (error) {
@@ -339,20 +461,49 @@ function Call({ interview, candidate }: CallProps) {
     setLoading(true);
 
     try {
-      const oldUserEmails: string[] = (await ResponseService.getAllEmails(interview.id)).map(
-        (item) => item.email,
-      );
-      const isIneligible =
-        (!candidate && oldUserEmails.includes(useEmail)) ||
-        Boolean(
-          !candidate && interview?.respondents?.length && !interview.respondents.includes(useEmail),
-        );
+      const eligibility = candidate
+        ? { eligible: true }
+        : (await axios.post<{ eligible: boolean }>("/api/check-eligibility", {
+            interviewId: interview.id,
+            email: useEmail,
+          })).data;
+      const isIneligible = !eligibility.eligible;
 
       if (isIneligible) {
         setIsOldUser(true);
         setLoading(false);
 
         return;
+      }
+
+      // 摄像头权限在确定候选人可参加后、建立语音连接前请求，拒绝时不创建面试会话。
+      const proctorConfig = (await axios.get<{ enabled: boolean }>("/api/proctor/config")).data;
+      if (proctorConfig.enabled) {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("当前浏览器无法访问摄像头，请改用支持摄像头的安全浏览器。");
+        }
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: false,
+            video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 5, max: 10 } },
+          });
+          cameraStreamRef.current = stream;
+          setCameraStream(stream);
+          if (proctorVideoRef.current) {
+            proctorVideoRef.current.srcObject = stream;
+            await proctorVideoRef.current.play();
+          }
+          stream.getVideoTracks().forEach((track) => {
+            track.addEventListener("ended", () => {
+              setProctorNotice("摄像头已关闭或连接中断，请重新开启摄像头并联系招聘人员。");
+              if (isStartedRef.current && !endedRef.current) {
+                toast.error("摄像头连接中断，请联系招聘人员；本次面试仍可继续。");
+              }
+            });
+          });
+        } catch {
+          throw new Error("需要允许使用摄像头才能开始本次面试，请检查浏览器权限和摄像头设备。");
+        }
       }
 
       // ① 向服务端要一份会话参数（模型 / 音色 / 中文人设提示词 / 密钥）
@@ -365,6 +516,7 @@ function Call({ interview, candidate }: CallProps) {
           (question, index) => `${index + 1}. ${question.question}`,
         ),
         name: useName || "候选人",
+        email: useEmail,
       };
       const registered = await axios.post<RegisterCallResponse>("/api/register-call", {
         dynamic_data: data,
@@ -433,6 +585,10 @@ function Call({ interview, candidate }: CallProps) {
       if (!session.started) {
         throw new Error("该语音会话已被占用，请刷新页面后重试");
       }
+      proctorSessionRef.current = session.proctoring;
+      if (session.proctoring.enabled && !cameraStreamRef.current) {
+        throw new Error("摄像头未就绪，无法开始受监考保护的面试。");
+      }
 
       // 这里只用于候选人本地倒计时，服务端的 started_at / expires_at 才是最终依据。
       sessionStartPerfRef.current = performance.now();
@@ -441,6 +597,7 @@ function Call({ interview, candidate }: CallProps) {
           ? Math.max(0, Date.parse(session.expiresAt) - Date.parse(session.startedAt))
           : null;
       callIdRef.current = cfg.callId;
+      analysisTokenRef.current = session.analysisToken;
       sessionMetaRef.current = { model: cfg.model, voice: cfg.voice };
 
       isStartedRef.current = true;
@@ -455,6 +612,7 @@ function Call({ interview, candidate }: CallProps) {
       console.error("startConversation failed:", error);
       toast.error(error instanceof Error ? error.message : "无法开始面试，请稍后重试");
       clientRef.current?.stop();
+      stopProctoring();
     } finally {
       setLoading(false);
     }
@@ -487,6 +645,10 @@ function Call({ interview, candidate }: CallProps) {
   return (
     <div className="flex justify-center items-center min-h-screen bg-gray-100">
       {isStarted && <TabSwitchWarning />}
+      <div className={cameraStream ? "fixed bottom-4 right-4 z-30 w-36 overflow-hidden rounded-xl border-2 border-indigo-300 bg-white shadow-lg sm:w-48" : "hidden"}>
+        <video ref={proctorVideoRef} autoPlay muted playsInline className="aspect-video w-full object-cover" />
+        <p className="px-2 py-1 text-center text-xs font-medium text-slate-700">摄像头监考已开启</p>
+      </div>
       <div className="bg-white rounded-md md:w-[80%] w-[90%]">
         <Card className="h-[88vh] rounded-lg border-2 border-b-4 border-r-4 border-black text-xl font-bold transition-all  md:block dark:border-white ">
           <div>
@@ -522,6 +684,7 @@ function Call({ interview, candidate }: CallProps) {
             {/* ─────────── 开始页 ─────────── */}
             {!isStarted && !isEnded && !isOldUser && (
               <div className="w-[calc(100%-1rem)] max-w-[400px] min-w-0 mx-auto mt-2 border border-indigo-200 rounded-md p-2 m-2 bg-slate-50">
+                {proctorNotice && <p role="status" className="mb-3 rounded-lg bg-amber-50 p-3 text-sm font-normal text-amber-900">{proctorNotice}</p>}
                 <div>
                   {interview?.logo_url && (
                     <div className="p-1 flex justify-center">
@@ -623,6 +786,7 @@ function Call({ interview, candidate }: CallProps) {
             {/* ─────────── 通话中 ─────────── */}
             {isStarted && !isEnded && !isOldUser && (
               <>
+                {proctorNotice && <div role="status" className="mx-auto my-2 max-w-xl rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-normal text-amber-900">{proctorNotice}</div>}
                 <div className="flex flex-row items-center justify-center gap-3 text-xs font-normal text-gray-500">
                   <span
                     className={`inline-block h-2 w-2 rounded-full ${

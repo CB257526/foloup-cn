@@ -41,3 +41,9 @@ supabase/.temp/
 
 # SQLite 数据目录（P0 本地数据层）
 /data/
+
+# 摄像头监考截图私有存储目录
+/proctoring/
+
+# 摄像头监考截图（本地私有目录，生产环境通过 Docker volume 持久化）
+/proctoring/

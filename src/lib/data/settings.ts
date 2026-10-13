@@ -18,6 +18,9 @@ export interface AppSettings {
   llmJsonMode: boolean;
   realtimeModel: string;
   defaultInterviewDuration: number;
+  proctoringEnabled: boolean;
+  proctoringIntervalSeconds: number;
+  proctoringConfidenceThreshold: number;
   apiKeyConfigured: boolean;
 }
 
@@ -35,6 +38,9 @@ const SETTING_KEYS = [
   "llm_json_mode",
   "realtime_model",
   "default_interview_duration",
+  "proctoring_enabled",
+  "proctoring_interval_seconds",
+  "proctoring_confidence_threshold",
   SECRET_KEY,
 ] as const;
 
@@ -92,7 +98,7 @@ function decryptSecret(value: string): string {
 
 function readStoredSettings(): Map<string, string> {
   const rows = getDb()
-    .prepare("SELECT key, value FROM app_setting WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?)")
+    .prepare("SELECT key, value FROM app_setting WHERE key IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
     .all(...SETTING_KEYS) as Array<{ key: string; value: string }>;
 
   return new Map(rows.map((row) => [row.key, row.value]));
@@ -134,10 +140,28 @@ export function getAppSettings(): AppSettings {
       1,
       60,
     ),
+    proctoringEnabled: (stored.get("proctoring_enabled") || "1") !== "0",
+    proctoringIntervalSeconds: readInt(
+      stored.get("proctoring_interval_seconds"),
+      30,
+      5,
+      60,
+    ),
+    proctoringConfidenceThreshold: readFloat(
+      stored.get("proctoring_confidence_threshold"),
+      0.85,
+      0.5,
+      1,
+    ),
     apiKeyConfigured: Boolean(
       storedKey ? decryptSecret(storedKey) : process.env.QWEN_API_KEY || process.env.LLM_API_KEY,
     ),
   };
+}
+
+function readFloat(value: string | undefined, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
 }
 
 /** 仅服务端运行时调用；优先使用数据库设置，其次回落到环境变量。 */
@@ -165,6 +189,9 @@ export function saveAppSettings(input: {
   llmJsonMode: boolean;
   realtimeModel: string;
   defaultInterviewDuration: number;
+  proctoringEnabled: boolean;
+  proctoringIntervalSeconds: number;
+  proctoringConfidenceThreshold: number;
   apiKey?: string;
 }): void {
   const rows: Array<[string, string, number]> = [
@@ -175,6 +202,9 @@ export function saveAppSettings(input: {
     ["llm_json_mode", input.llmJsonMode ? "1" : "0", 0],
     ["realtime_model", input.realtimeModel.trim(), 0],
     ["default_interview_duration", String(input.defaultInterviewDuration), 0],
+    ["proctoring_enabled", input.proctoringEnabled ? "1" : "0", 0],
+    ["proctoring_interval_seconds", String(input.proctoringIntervalSeconds), 0],
+    ["proctoring_confidence_threshold", String(input.proctoringConfidenceThreshold), 0],
   ];
 
   if (input.apiKey?.trim()) {

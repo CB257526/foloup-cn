@@ -79,9 +79,16 @@ export function getLlmConfig(overrides?: Partial<LlmConfig>): LlmConfig {
   return { ...config, ...overrides };
 }
 
+type ChatMessageContent =
+  | string
+  | Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+    >;
+
 interface ChatMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: ChatMessageContent;
 }
 
 interface ChatCompletionChoice {
@@ -108,6 +115,8 @@ export interface ChatCompletionParams {
   model?: string;
   /** 覆盖 token 上限（⚠️ 不要低于 2000） */
   maxTokens?: number;
+  /** 可选的图片 data URL；传入后会把 user 消息组装成图文内容。 */
+  imageDataUrl?: string;
   /** 重试次数（网络错误 / 429 / 5xx 才重试；4xx 直接失败） */
   retries?: number;
   /** 测试连接等服务端调用可使用尚未保存的设置，但参数不会传到浏览器。 */
@@ -131,6 +140,7 @@ export async function chatCompletion({
   json,
   model,
   maxTokens,
+  imageDataUrl,
   retries = 2,
   config: configOverrides,
 }: ChatCompletionParams): Promise<string> {
@@ -157,7 +167,15 @@ export async function chatCompletion({
     model: useModel,
     messages: [
       { role: "system", content: system },
-      { role: "user", content: userPrompt },
+      {
+        role: "user",
+        content: imageDataUrl
+          ? [
+              { type: "image_url", image_url: { url: imageDataUrl } },
+              { type: "text", text: userPrompt },
+            ]
+          : userPrompt,
+      },
     ] satisfies ChatMessage[],
     max_tokens: useMaxTokens,
   };

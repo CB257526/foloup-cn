@@ -12,6 +12,7 @@ import {
   withdrawConsentRecord,
 } from "@/lib/data/call-sessions";
 import type { CompetencyDimensions } from "@/types/response";
+import { requireAdmin } from "@/lib/auth/admin";
 
 /** 实时语音连接成功后写入服务端开始证据。 */
 export async function startCallSessionAction(input: StartCallSessionInput) {
@@ -30,6 +31,7 @@ export async function createConsentRecordAction(input: CreateConsentRecordInput)
 
 /** 记录同意撤回时间，不删除已形成的审计记录。 */
 export async function withdrawConsentRecordAction(id: number) {
+  await requireAdmin();
   return withdrawConsentRecord(id);
 }
 
@@ -38,6 +40,7 @@ export async function saveCompetencyDimensionsAction(
   interviewId: string,
   dimensions: CompetencyDimensions,
 ): Promise<boolean> {
+  await requireAdmin();
   return saveCompetencyDimensions(interviewId, dimensions);
 }
 
@@ -45,5 +48,6 @@ export async function saveCompetencyDimensionsAction(
 export async function getCompetencyDimensionsAction(
   interviewId: string,
 ): Promise<CompetencyDimensions> {
+  await requireAdmin();
   return getCompetencyDimensions(interviewId);
 }
