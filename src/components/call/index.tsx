@@ -655,8 +655,19 @@ function Call({ interview, candidate }: CallProps) {
         await finishCall("proctoring_terminated");
       }
     } catch (error) {
-      proctorDebugRef.current.failureCount += 1;
       const statusCode = axios.isAxiosError(error) ? error.response?.status : undefined;
+      const message = axios.isAxiosError(error)
+        ? typeof error.response?.data?.error === "string"
+          ? error.response.data.error
+          : error.message
+        : error instanceof Error
+          ? error.message
+          : "";
+      // 面试结束时可能还有一次截图请求在收尾，不应把服务端拒绝采集当成视觉故障提示。
+      if (statusCode === 400 && message.includes("面试已经结束")) {
+        return;
+      }
+      proctorDebugRef.current.failureCount += 1;
       if (statusCode !== 429) {
         console.error("摄像头截图分析失败：", error instanceof Error ? error.message : String(error));
         setProctorNotice("摄像头截图暂时无法分析，面试会继续进行；请保持摄像头开启。");

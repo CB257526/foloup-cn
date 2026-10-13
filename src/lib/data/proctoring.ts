@@ -329,6 +329,29 @@ export function recordProctorFailure(callId: string, token: string, captureId: n
   return failures;
 }
 
+/**
+ * 面试结束与视觉分析完成发生竞态时，保留截图但标记为已取消。
+ *
+ * 这不是视觉服务故障：截图可能已经送达模型，但面试结束后不应再写入违规结果，
+ * 也不应增加连续故障次数或生成后台故障告警。
+ */
+export function recordProctorCancellation(
+  callId: string,
+  token: string,
+  captureId: number,
+  message = "面试在视觉分析完成前结束，未计入技术故障。",
+): void {
+  const session = getProctorSession(callId, token);
+  if (!session || session.token_hash !== hashToken(token)) throw new Error("监考会话凭证无效。");
+  getDb()
+    .prepare(
+      `UPDATE proctor_capture
+       SET analysis_status = 'cancelled', error_code = 'call_ended', analysis_result = ?
+       WHERE id = ? AND call_id = ? AND analysis_status = 'pending'`,
+    )
+    .run(JSON.stringify({ code: "call_ended", message }), captureId, callId);
+}
+
 export function markProctorSuccess(callId: string, token: string): void {
   const session = getProctorSession(callId, token);
   if (!session || session.token_hash !== hashToken(token)) return;

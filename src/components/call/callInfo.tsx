@@ -455,7 +455,15 @@ function CallInfo({ call_id, onDeleteResponse, onCandidateStatusChange }: CallPr
                         />
                         <div className="p-2 text-[11px] text-slate-600">
                           <p>{new Date(capture.captured_at).toLocaleString("zh-CN")}</p>
-                          <p>{capture.analysis_status === "failed" ? `分析失败：${capture.error_code || "未知错误"}` : capture.violation_type ? PROCTOR_EVENT_TEXT[capture.violation_type] || capture.violation_type : "未检测到违规"}</p>
+                          <p>
+                            {capture.analysis_status === "cancelled"
+                              ? "面试结束时取消分析"
+                              : capture.analysis_status === "failed"
+                                ? `分析失败：${capture.error_code || "未知错误"}`
+                                : capture.violation_type
+                                  ? PROCTOR_EVENT_TEXT[capture.violation_type] || capture.violation_type
+                                  : "未检测到违规"}
+                          </p>
                         </div>
                       </div>
                     ))}

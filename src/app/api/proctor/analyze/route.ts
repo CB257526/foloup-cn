@@ -3,6 +3,7 @@ import { chatCompletion, extractJson } from "@/lib/llm";
 import {
   createPendingCapture,
   markProctorSuccess,
+  recordProctorCancellation,
   recordCaptureAndAnalysis,
   recordProctorFailure,
 } from "@/lib/data/proctoring";
@@ -10,6 +11,10 @@ import { PROCTOR_SYSTEM_PROMPT, PROCTOR_USER_PROMPT } from "@/lib/proctoring/pro
 import type { ProctorAnalysis } from "@/lib/proctoring/types";
 
 export const maxDuration = 60;
+
+function isCallEndedError(error: unknown): boolean {
+  return error instanceof Error && error.message === "面试已经结束，不能继续采集画面。";
+}
 
 export async function POST(request: Request) {
   try {
@@ -56,12 +61,27 @@ export async function POST(request: Request) {
       markProctorSuccess(body.callId, body.token);
       return NextResponse.json(result);
     } catch (error) {
+      const message = error instanceof Error ? error.message : "视觉模型调用失败";
+      // 用户结束面试时，正在等待模型返回的截图可能在这里才完成状态校验。
+      // 这种收尾竞态不属于视觉服务故障，不应增加后台故障次数。
+      if (isCallEndedError(error)) {
+        recordProctorCancellation(body.callId, body.token, pending.captureId);
+        return NextResponse.json({
+          captureId: pending.captureId,
+          status: "cancelled",
+          strikeCount: 0,
+          maxStrikes: 3,
+          event: null,
+          terminated: false,
+          consecutiveFailures: 0,
+        });
+      }
       const failures = recordProctorFailure(
         body.callId,
         body.token,
         pending.captureId,
         "vision_analysis_failed",
-        error instanceof Error ? error.message : "视觉模型调用失败",
+        message,
       );
       return NextResponse.json({
         captureId: pending.captureId,
@@ -74,6 +94,10 @@ export async function POST(request: Request) {
       });
     }
   } catch (error) {
+    // 请求刚发出但面试已结束时，可能还没有成功创建截图记录；这是正常收尾，不提示技术故障。
+    if (isCallEndedError(error)) {
+      return NextResponse.json({ status: "cancelled", consecutiveFailures: 0 });
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "摄像头监考分析失败。" },
       { status: 400 },
