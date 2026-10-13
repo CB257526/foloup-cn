@@ -38,18 +38,10 @@ export async function revokeCandidateInviteAction(id: string, interviewId: strin
   return candidateRepo.revokeCandidateInvite(id, interviewId);
 }
 
-/** 同一服务端事务保存同意版本和候选人同意审计记录。 */
-export async function recordCandidateConsentAction(input: {
-  id: string;
-  interviewId: string;
-  consentVersion: string;
-  voiceProcessingAccepted: boolean;
-  evaluationAccepted: boolean;
-  improvementAccepted: boolean;
-  userAgent?: string | null;
-}) {
-  return candidateRepo.recordCandidateConsent(input);
-}
+/**
+ * ⚠️ 同意留痕**不再**从这里暴露：旧实现接受浏览器提交的 `id` / `interviewId`，
+ * 身份可被伪造。现已统一收敛到 `src/app/actions/consents.ts`（只认专属令牌）。
+ */
 
 /** 候选人确认删除后，同步清除简历、专属链接、面试结果和同意留痕。 */
 export async function deleteCandidatePersonalDataAction(id: string, interviewId: string) {

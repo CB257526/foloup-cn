@@ -1,5 +1,5 @@
 /**
- * 候选人知情同意 + 数据留存期限 —— 客户端工具（P3 名下，新建文件）
+ * 候选人知情同意 + 数据留存期限 —— 客户端工具（P3 名下新建，本次 P2 后续改造修订）
  *
  * 为什么在「页面层」而不是通话组件里：
  *   P1 的通话组件（`src/components/call/**`）已在验收中声明「内部不涉及合规交互」，
@@ -11,36 +11,32 @@
  *   · 自动化决策（AI 初筛）需保证透明与结果公平，就业歧视的举证责任在企业
  *     ⇒ 页面上必须写明「AI 仅辅助初筛，最终决定由人工做出」。
  *
- * ⚠️ 本文件只做**客户端记录**（localStorage）。服务端留痕（同意的审计证据）需要
- *    数据层加表/加列，属 P0/主控名下文件 —— 已写进 进度/P3-候选人体验与合规.md「阻塞与待确认」。
+ * ⚠️ 本文件只做**客户端便利记录**（localStorage），用于「同一设备重开链接时少读一遍说明」。
+ *    它**不是**审计数据库：真正的同意留痕在服务端
+ *    （`src/lib/data/consents.ts` + `consent_record` 表，按专属令牌写入）。
+ *    因此：
+ *      · 文案版本号不再是这里的常量，而是服务端下发的 `ConsentPolicy.version`；
+ *      · user-agent 由服务端从请求头读取并压缩成摘要，客户端不再采集、也不再上报。
  */
 
-/** 同意文案版本号：文案一改就要升版本，旧版本记录不再视为有效同意 */
-export const CONSENT_VERSION = "2026-10-11.v1";
-
-/** localStorage 键前缀（按岗位隔离：重开面试链接不必重复同意同一个岗位） */
+/** localStorage 键前缀（按候选人/岗位隔离） */
 const STORAGE_PREFIX = "foloup.consent.";
 
-/** 默认留存期限（月）。可用 NEXT_PUBLIC_DATA_RETENTION_MONTHS 覆盖 */
-const DEFAULT_RETENTION_MONTHS = 6;
-
 export type ConsentRecord = {
-  /** 同意文案版本 */
+  /** 同意文案版本（来自服务端下发的策略，不是本地常量） */
   version: string;
   /** 岗位 id（interview.id，不是 URL 里的 readable_slug） */
   interviewId: string;
   /** 岗位名，便于人工核对 */
   interviewName: string;
-  /** 同意时间（ISO 8601，本地时钟） */
+  /** 同意时间（ISO 8601，本地时钟；服务端另有一份权威时间） */
   agreedAt: string;
-  /** ① 单独同意：声音等敏感个人信息（必选） */
-  sensitiveDataAgreed: boolean;
-  /** ② 已阅读并知悉留存期限与删除方式（必选） */
-  retentionAgreed: boolean;
-  /** ③ 可选：去标识化后用于面试流程改进（不勾也能面试） */
-  optionalImproveAgreed: boolean;
-  /** 设备信息，供人工排查（不用于画像） */
-  userAgent: string;
+  /** ① 单独同意：语音（敏感个人信息）上传至国内大模型语音服务（必选） */
+  voiceProcessingAccepted: boolean;
+  /** ② 同意生成文字转录与 AI 初筛评分，并知悉留存期限/可见范围/删除方式（必选） */
+  evaluationAccepted: boolean;
+  /** ③ 可选：去标识化后用于面试流程改进 */
+  improvementAccepted: boolean;
 };
 
 function storageKey(interviewId: string, scope?: string): string {
@@ -48,11 +44,18 @@ function storageKey(interviewId: string, scope?: string): string {
 }
 
 /**
- * 读取同意记录。localStorage 在隐私模式 / 禁用 cookie 的环境会抛异常，
- * 这里一律吞掉并返回 null（表现为「需要重新同意」——宁可多问一次，不可漏问）。
+ * 读取本地同意记录。
+ * localStorage 在隐私模式 / 禁用 cookie 的环境会抛异常，这里一律吞掉并返回 null
+ * （表现为「需要重新同意」—— 宁可多问一次，不可漏问）。
+ *
+ * `expectedVersion` 由服务端下发：版本不一致 ⇒ 视为未同意（文案改版后旧同意不作数）。
  */
-export function readConsent(interviewId: string, scope?: string): ConsentRecord | null {
-  if (!interviewId || typeof window === "undefined") {
+export function readConsent(
+  interviewId: string,
+  scope: string | undefined,
+  expectedVersion: string,
+): ConsentRecord | null {
+  if (!interviewId || !expectedVersion || typeof window === "undefined") {
     return null;
   }
   try {
@@ -63,8 +66,7 @@ export function readConsent(interviewId: string, scope?: string): ConsentRecord 
     }
     const parsed = JSON.parse(raw) as ConsentRecord;
 
-    // 版本不一致 ⇒ 视为未同意
-    return parsed && parsed.version === CONSENT_VERSION ? parsed : null;
+    return parsed && parsed.version === expectedVersion ? parsed : null;
   } catch {
     return null;
   }
@@ -92,19 +94,15 @@ export function clearConsent(interviewId: string): void {
   }
 }
 
-/** 留存期限（月）。非法值一律回退到默认 6 个月 */
-export function getRetentionMonths(): number {
-  const raw = process.env.NEXT_PUBLIC_DATA_RETENTION_MONTHS;
-  const parsed = Number(raw);
-
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_RETENTION_MONTHS;
-}
-
-/** 按「月」推到期日（自然月，日对齐） */
-export function retentionDeadline(from: Date, months: number = getRetentionMonths()): Date {
+/** 按「月」推到期日（自然月，日对齐）—— 月数由服务端策略传入，避免前后端各算一套 */
+export function retentionDeadline(from: Date, months: number): Date {
   const d = new Date(from.getTime());
+  const day = d.getDate();
 
+  d.setDate(1);
   d.setMonth(d.getMonth() + months);
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, lastDay));
 
   return d;
 }

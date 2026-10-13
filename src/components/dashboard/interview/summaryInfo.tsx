@@ -7,7 +7,7 @@ import { CandidateStatus } from "@/lib/enum";
 import { convertSecondstoMMSS } from "@/lib/utils";
 import type { Interview } from "@/types/interview";
 import type { Interviewer } from "@/types/interviewer";
-import type { Response } from "@/types/response";
+import type { CompetencyScore, Response } from "@/types/response";
 import { Info, StarIcon, UserCircleIcon } from "lucide-react";
 import Image from "next/image";
 import { type ReactNode, useMemo } from "react";
@@ -157,13 +157,28 @@ function SummaryInfo({ responses, interview, interviewers }: SummaryProps) {
       statusCounts[status] += 1;
     }
 
-    const tableData: TableData[] = responses.map((response) => ({
-      call_id: response.call_id,
-      name: response.name || "匿名",
-      overallScore: response.analytics?.overallScore || 0,
-      communicationScore: response.analytics?.communication?.score || 0,
-      callSummary: response.analytics?.softSkillSummary || "暂无总结",
-    }));
+    const tableData: TableData[] = responses.map((response) => {
+      // 只消费已落库的结构化能力分；旧评分没有该字段时留空数组，表格显示「暂无能力分」。
+      const rawScores = response.analytics?.competencyScores;
+      const competencyScores = Array.isArray(rawScores)
+        ? rawScores
+            .map((item: CompetencyScore) => ({
+              name: typeof item?.name === "string" ? item.name : "",
+              score:
+                typeof item?.score === "number" && Number.isFinite(item.score) ? item.score : null,
+            }))
+            .filter((item) => item.name)
+        : [];
+
+      return {
+        call_id: response.call_id,
+        name: response.name || "匿名",
+        overallScore: response.analytics?.overallScore || 0,
+        communicationScore: response.analytics?.communication?.score || 0,
+        callSummary: response.analytics?.softSkillSummary || "暂无总结",
+        competencyScores,
+      };
+    });
 
     return {
       totalDuration,

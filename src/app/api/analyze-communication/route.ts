@@ -18,11 +18,16 @@ export async function POST(req: Request) {
   logger.info("analyze-communication request received");
 
   try {
-    const body = await req.json();
-    const { transcript } = body;
+    const body = await req.json().catch(() => null);
+    const transcript = body?.transcript;
 
-    if (!transcript) {
-      return NextResponse.json({ error: "Transcript is required" }, { status: 400 });
+    // D-6：原实现对入参不做类型校验，传非字符串会**返回 200 但结果是垃圾**
+    //（模型会老实回答"逐字稿没传进来"）。这里补上校验，避免 HR 拿到看起来成功的无用结果。
+    if (typeof transcript !== "string" || !transcript.trim()) {
+      return NextResponse.json(
+        { error: "缺少逐字稿内容（transcript 必须是非空字符串）" },
+        { status: 400 },
+      );
     }
 
     const content = await chatCompletion({
@@ -39,7 +44,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ analysis }, { status: 200 });
   } catch (error) {
     // 带上具体原因，否则线上只能看到一句「Internal server error」，无法定位
-    logger.error("Error analyzing communication skills", error instanceof Error ? error.message : String(error));
+    logger.error(
+      "Error analyzing communication skills",
+      error instanceof Error ? error.message : String(error),
+    );
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }

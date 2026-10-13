@@ -4,10 +4,15 @@ import {
   getCandidateInviteByIdAction,
   getCandidateInvitesForInterviewAction,
   getPublicCandidateInviteByTokenAction,
-  recordCandidateConsentAction,
   revokeCandidateInviteAction,
 } from "@/app/actions/candidates";
-import type { CreateCandidateInviteInput } from "@/types/candidate";
+import { getConsentPolicyAction, recordConsentAction } from "@/app/actions/consents";
+import type {
+  ConsentPolicy,
+  ConsentSubmitInput,
+  ConsentSubmitResult,
+  CreateCandidateInviteInput,
+} from "@/types/candidate";
 
 export const CandidateService = {
   createInvite(input: CreateCandidateInviteInput) {
@@ -28,15 +33,12 @@ export const CandidateService = {
   revokeInvite(id: string, interviewId: string) {
     return revokeCandidateInviteAction(id, interviewId);
   },
-  recordConsent(input: {
-    id: string;
-    interviewId: string;
-    consentVersion: string;
-    voiceProcessingAccepted: boolean;
-    evaluationAccepted: boolean;
-    improvementAccepted: boolean;
-    userAgent?: string | null;
-  }) {
-    return recordCandidateConsentAction(input);
+  /** 提交候选人同意留痕。只接受专属令牌，身份与 user-agent 摘要均由服务端生成。 */
+  recordConsent(input: ConsentSubmitInput): Promise<ConsentSubmitResult> {
+    return recordConsentAction(input);
+  },
+  /** 读取服务端权威的同意文案版本与留存月数。 */
+  getConsentPolicy(): Promise<ConsentPolicy> {
+    return getConsentPolicyAction();
   },
 };

@@ -9,6 +9,7 @@ import {
   normalizeInterviewDuration,
 } from "@/lib/constants";
 import { getCandidateRegistrationContextByToken } from "@/lib/data/candidates";
+import { verifyCandidateConsentForCall } from "@/lib/data/consents";
 import { getRuntimeAppSettings } from "@/lib/data/settings";
 import { logger } from "@/lib/logger";
 import { InterviewerService } from "@/services/interviewers.service";
@@ -100,6 +101,26 @@ export async function POST(req: Request) {
     if (!interview || interview.id !== candidate.interview_id || !interview.is_active) {
       return NextResponse.json({ error: "该岗位当前不可参加面试" }, { status: 410 });
     }
+
+    /**
+     * 🔒 服务端同意闸门（必须在**下发任何实时语音凭据之前**）。
+     *
+     * 页面层的拦截（包括 localStorage）不是安全边界：候选人可以自己改 localStorage，
+     * 也可以绕过页面直接 POST 这个接口。所以真正的闸门放在这里：
+     * 令牌 ↔ candidate_id ↔ interview_id 三要素互相匹配、邀请仍有效，
+     * 且库里存在「该候选人 + 该岗位 + 当前文案版本」的同意留痕（两项必选为 1、未撤回）。
+     */
+    const consent = verifyCandidateConsentForCall({
+      inviteToken: body.candidate_invite_token,
+      candidateId: body.candidate_id,
+      interviewId: body.interview_id,
+    });
+    if (!consent.ok) {
+      logger.warn(`register-call: 拒绝签发语音凭据（${consent.code}）`);
+
+      return NextResponse.json({ error: consent.message }, { status: 403 });
+    }
+
     interviewId = interview.id;
     interviewerId = interview.interviewer_id;
     existingCallId = candidate.resume_call_id;

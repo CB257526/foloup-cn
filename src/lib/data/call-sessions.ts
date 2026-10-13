@@ -1,5 +1,6 @@
 import { normalizeInterviewDuration } from "@/lib/constants";
 import { markCandidateInviteCompleted, markCandidateInviteStarted } from "@/lib/data/candidates";
+import { assertCandidateConsentForCall } from "@/lib/data/consents";
 import type { ResponseRow } from "@/lib/data/responses";
 import { getDb, toJsonCol } from "@/lib/db";
 import type {
@@ -244,6 +245,20 @@ export async function startCallSession(
     if (!candidate || candidate.invite_token !== input.candidateInviteToken) {
       throw new Error("候选人专属链接校验失败");
     }
+    /*
+     * 🔒 正式开始的最后一道同意闸门。
+     *
+     * 不依赖更早的页面 / 接口检查：`startCallSession` 会被候选人浏览器直接触发，
+     * 只靠前面的页面拦截或 register-call 校验，等于把安全边界交给客户端。
+     * 身份一律取自服务端（令牌 → 邀请记录），不接受客户端提交的姓名 / 邮箱 / 文案版本。
+     *
+     * ⚠️ 这段只做授权校验，不改变 P0 已冻结的时长、结束与幂等语义。
+     */
+    assertCandidateConsentForCall({
+      inviteToken: input.candidateInviteToken,
+      candidateId: input.candidateId,
+      interviewId: input.interviewId,
+    });
     candidateIdentity = { name: candidate.name, email: candidate.email };
   }
   const existing = getRow(input.callId);

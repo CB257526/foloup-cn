@@ -3,20 +3,52 @@
  *
  * ⚠️ 与「面试中对话」那套提示词是两回事：
  *    - 本文件 = 面试**结束后**，把逐字稿喂给 LLM 做**评分与结构化分析**；
- *    - 面试中实时对话的人设提示词在 `src/lib/constants.ts`（归 P1），二者不要混用。
+ *    - 面试中实时对话的人设提示词在 `src/lib/constants.ts`（归 P1 语音层），二者不要混用。
  *
  * ⚠️ 输出 JSON 的键名是**对外契约**，下游 UI 直接按这些键取值，不要改：
  *    `components/call/callInfo.tsx`、`components/dashboard/interview/summaryInfo.tsx`、
  *    `components/dashboard/interview/dataTable.tsx` 消费 overallScore / overallFeedback /
  *    communication.score / communication.feedback / questionSummaries[] / softSkillSummary。
+ *
+ * 🆕 后续 P1 新增 `competencyScores[]`（按岗位能力维度评分 + 原话证据）：
+ *    - 维度名单由调用方传入（岗位 `competency_dimensions`），模型**不得新增维度**；
+ *    - `evidence[].quote` 必须是候选人原话；服务端会逐条回查逐字稿，核对不上的直接丢弃；
+ *    - 模型**不要**输出 `transcriptOffsetMs`：位置由服务端从真实结构化逐字稿里取，
+ *      以免出现"看起来精确、实际是编的"时间戳。
  */
 
+import type { CompetencyDimension } from "@/types/response";
+
 export const SYSTEM_PROMPT =
-  "你是面试逐字稿分析专家。你只能使用给定的主问题进行分析，不得自行生成或推断额外的问题。所有输出必须使用简体中文。";
+  "你是面试逐字稿分析专家。你只能使用给定的主问题、给定的岗位能力维度进行分析，" +
+  "不得自行生成或推断额外的问题或维度。引用候选人观点时必须逐字摘抄逐字稿原句，不得改写或编造。" +
+  "所有输出必须使用简体中文。";
+
+/** 把维度数组渲染成提示词里的清单文本。 */
+function renderDimensionList(dimensions: CompetencyDimension[]): string {
+  if (dimensions.length === 0) {
+    return "（本次没有配置能力维度，请把 competencyScores 输出为空数组）";
+  }
+
+  return dimensions
+    .map((dimension, index) => {
+      const parts = [`${index + 1}. ${dimension.name}`];
+      if (dimension.description) {
+        parts.push(`说明：${dimension.description}`);
+      }
+      if (dimension.indicators?.length) {
+        parts.push(`观察点：${dimension.indicators.join("、")}`);
+      }
+
+      return `   - ${parts.join("；")}`;
+    })
+    .join("\n");
+}
 
 export const getInterviewAnalyticsPrompt = (
   interviewTranscript: string,
   mainInterviewQuestions: string,
+  competencyDimensions: CompetencyDimension[] = [],
 ) => `请分析下面这场面试的逐字稿，并给出结构化的评分与反馈：
 
 ###
@@ -26,6 +58,10 @@ ${interviewTranscript}
 ###
 主问题清单：
 ${mainInterviewQuestions}
+
+###
+本次岗位能力维度（**只能评这些维度，不得新增、不得改名**）：
+${renderDimensionList(competencyDimensions)}
 
 请基于上述逐字稿与给出的主问题，按以下要求生成分析结果：
 
@@ -66,6 +102,14 @@ ${mainInterviewQuestions}
       - 小结写成一段连贯的中文，把该主问题相关的信息都覆盖到。
       - question 字段必须原样引用该主问题的原文（可保留题目清单里的序号，不要改写、不要重述）。
 4. 软素质总结：就自信度、领导力、适应力、批判性思维、决策能力等方面，给出一句 30 字以内的概括。
+5. 能力维度评分（competencyScores）：**严格按上面「本次岗位能力维度」清单逐项评分**。
+   - 每个维度给出 0-100 的分数、60 字以内的结论、风险提示，以及**支撑该结论的候选人原话**。
+   - 名称必须与维度清单里的中文名称**完全一致**；清单外的维度一律不要输出。
+   - evidence[].quote 必须是逐字稿中**候选人本人**说过的原句（逐字保留，不要改写、不要翻译、
+     不要补字、不要省略号拼接）。如果该维度找不到候选人原话支撑，就给它空数组，
+     不要用 AI 面试官的话或自己总结的句子充当证据。
+   - 不要输出时间戳/偏移量字段（transcriptOffsetMs 由服务端根据逐字稿定位）。
+   - riskFlags 用简短中文短语，如「缺少量化结果」「回答偏空泛」；没有风险就输出空数组。
 
 请确保输出为合法的 JSON，结构如下：
 {
@@ -73,7 +117,17 @@ ${mainInterviewQuestions}
   "overallFeedback": string,
   "communication": { "score": number, "feedback": string },
   "questionSummaries": [{ "question": string, "summary": string }],
-  "softSkillSummary": string
+  "softSkillSummary": string,
+  "competencyScores": [
+    {
+      "name": string,
+      "score": number,
+      "feedback": string,
+      "evidence": [{ "quote": string }],
+      "riskFlags": [string]
+    }
+  ]
 }
 
-重要：只使用给定的主问题。不要生成或推断追问等额外的问题。全程使用简体中文。`;
+重要：只使用给定的主问题和给定的岗位能力维度。不要生成或推断额外的问题或维度。
+evidence 里的引用必须逐字来自候选人发言。全程使用简体中文。`;

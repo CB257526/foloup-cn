@@ -1,3 +1,4 @@
+import { CURRENT_CONSENT_VERSION } from "@/lib/data/consents";
 import { fromJsonCol, getDb, toJsonCol } from "@/lib/db";
 import { decryptResumeText, encryptResumeText } from "@/lib/security/resume-encryption";
 import type {
@@ -196,6 +197,8 @@ export async function getPublicCandidateInviteByToken(
     questions: fromJsonCol<Question[]>(row.questions, []),
     status: row.status,
     consent_version: row.consent_version,
+    // 服务端注入「当前有效文案版本」：候选人页据此判断是否需要重新确认（文案改版后旧同意不作数）
+    required_consent_version: CURRENT_CONSENT_VERSION,
     started_at: row.started_at,
     completed_at: row.completed_at,
     revoked_at: row.revoked_at,
@@ -250,75 +253,6 @@ export async function revokeCandidateInvite(id: string, interviewId: string): Pr
     )
     .run(id, interviewId);
   return result.changes === 1;
-}
-
-/** 记录该候选人已阅读并同意的版本，以便 HR 后续核查。 */
-export async function saveCandidateConsentVersion(
-  id: string,
-  interviewId: string,
-  consentVersion: string,
-): Promise<boolean> {
-  const result = getDb()
-    .prepare(
-      `UPDATE candidate_invite SET consent_version = ?
-       WHERE id = ? AND interview_id = ? AND revoked_at IS NULL`,
-    )
-    .run(consentVersion, id, interviewId);
-  return result.changes === 1;
-}
-
-/** 同一笔 SQLite 事务同时保存候选人同意版本和审计记录。 */
-export async function recordCandidateConsent(input: {
-  id: string;
-  interviewId: string;
-  consentVersion: string;
-  voiceProcessingAccepted: boolean;
-  evaluationAccepted: boolean;
-  improvementAccepted: boolean;
-  userAgent?: string | null;
-}): Promise<{ id: number; createdAt: string }> {
-  if (!input.consentVersion.trim()) {
-    throw new Error("缺少同意文案版本");
-  }
-  const db = getDb();
-  const record = db.transaction(() => {
-    const candidate = db
-      .prepare(
-        `SELECT name, email FROM candidate_invite
-         WHERE id = ? AND interview_id = ? AND revoked_at IS NULL LIMIT 1`,
-      )
-      .get(input.id, input.interviewId) as { name: string; email: string } | undefined;
-    if (!candidate) {
-      throw new Error("候选人链接已失效，无法记录同意");
-    }
-
-    db.prepare(
-      "UPDATE candidate_invite SET consent_version = ? WHERE id = ? AND interview_id = ?",
-    ).run(input.consentVersion.trim(), input.id, input.interviewId);
-    const result = db
-      .prepare(
-        `INSERT INTO consent_record
-         (interview_id, candidate_id, candidate_email, candidate_name, consent_version,
-          voice_processing_accepted, evaluation_accepted, improvement_accepted, user_agent)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.interviewId,
-        input.id,
-        candidate.email,
-        candidate.name,
-        input.consentVersion.trim(),
-        input.voiceProcessingAccepted ? 1 : 0,
-        input.evaluationAccepted ? 1 : 0,
-        input.improvementAccepted ? 1 : 0,
-        input.userAgent ?? null,
-      );
-    const saved = db
-      .prepare("SELECT id, created_at FROM consent_record WHERE id = ?")
-      .get(Number(result.lastInsertRowid)) as { id: number; created_at: string };
-    return { id: Number(saved.id), createdAt: saved.created_at };
-  });
-  return record.immediate();
 }
 
 /** 候选人确认自助删除后，同一事务清除简历、邀请、关联面试结果与同意留痕。 */

@@ -1,5 +1,6 @@
 "use client";
 
+import CompetencyDimensionEditor from "@/components/dashboard/interview/competencyDimensionEditor";
 import QuestionCard from "@/components/dashboard/interview/create-popup/questionCard";
 import {
   AlertDialog,
@@ -21,7 +22,9 @@ import {
 } from "@/lib/constants";
 import { InterviewService } from "@/services/interviews.service";
 import type { Interview, Question } from "@/types/interview";
+import { DEFAULT_COMPETENCY_DIMENSIONS, normalizeCompetencyDimensions } from "@/types/interview";
 import type { Interviewer } from "@/types/interviewer";
+import type { CompetencyDimension } from "@/types/response";
 import { Plus, SaveIcon, TrashIcon } from "lucide-react";
 import { ArrowLeft } from "lucide-react";
 import Image from "next/image";
@@ -46,6 +49,15 @@ function EditInterview({ interview, interviewers }: EditInterviewProps) {
   const [questions, setQuestions] = useState<Question[]>(interview?.questions || []);
   const [selectedInterviewer, setSelectedInterviewer] = useState(interview?.interviewer_id);
   const [isAnonymous, setIsAnonymous] = useState<boolean>(interview?.is_anonymous || false);
+  /**
+   * 能力维度：历史岗位没有配置时**显示可编辑的默认值**，
+   * 但只有 HR 点击「保存」才会写库 —— 不能因为打开一次编辑页就悄悄覆盖数据库。
+   */
+  const [dimensions, setDimensions] = useState<CompetencyDimension[]>(() => {
+    const configured = normalizeCompetencyDimensions(interview?.competency_dimensions);
+
+    return configured.length > 0 ? configured : DEFAULT_COMPETENCY_DIMENSIONS;
+  });
 
   const [isClicked, setIsClicked] = useState(false);
 
@@ -85,6 +97,16 @@ function EditInterview({ interview, interviewers }: EditInterviewProps) {
 
   const onSave = async () => {
     const questionCount = questions.length < numQuestions ? questions.length : numQuestions;
+    // 能力维度至少要有一项带名称，否则 AI 评分没有可解释的分项依据。
+    const normalizedDimensions = normalizeCompetencyDimensions(dimensions);
+    if (normalizedDimensions.length === 0) {
+      setIsClicked(false);
+      toast.error("请至少填写一个能力维度名称", {
+        description: "AI 评分会按这些维度逐项打分并给出候选人原话证据。",
+      });
+
+      return;
+    }
 
     const interviewData = {
       objective: objective,
@@ -94,6 +116,7 @@ function EditInterview({ interview, interviewers }: EditInterviewProps) {
       time_duration: Number(duration),
       description: description,
       is_anonymous: isAnonymous,
+      competency_dimensions: normalizedDimensions,
     };
 
     try {
@@ -275,6 +298,13 @@ function EditInterview({ interview, interviewers }: EditInterviewProps) {
           >
             注意：若非匿名，将收集候选人的邮箱和姓名。
           </span>
+        </div>
+        <div className="mt-4 ml-2 w-[75%]">
+          <CompetencyDimensionEditor
+            dimensions={dimensions}
+            onChange={setDimensions}
+            disabled={isClicked}
+          />
         </div>
         <div className="flex flex-row justify-between w-[75%] gap-3 ml-2">
           <div className="flex flex-row justify-center items-center mt-5 ">

@@ -70,3 +70,47 @@
     overflow-x: hidden;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+ * P2 后续 · 候选人「四步开始流程」与设备检查（同意门 / 设备预检）
+ *
+ * 这一层只做两件事：
+ *   1. 窄屏不横向溢出（信息卡、步骤标签、按钮行都不许把页面撑宽）；
+ *   2. 长文案（岗位名、简历文件名、错误指引）允许换行，不撑破容器。
+ * 桌面端（>640px）的既有观感不受影响。
+ * ══════════════════════════════════════════════════════════════════════ */
+
+.candidate-shell [data-testid="consent-gate"],
+.candidate-shell [data-testid="device-check"],
+.candidate-shell [data-testid="consent-declined"] {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+/* 步骤标签 + 标题：标题太长时换行而不是把标签挤出去 */
+.candidate-shell [data-testid="consent-gate"] h1,
+.candidate-shell [data-testid="consent-gate"] h2,
+.candidate-shell [data-testid="consent-gate"] h3 {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  /* 设备检查里的「播放测试音」按钮：窄屏下整行落到下一行，避免与说明文字抢宽度。
+     ⚠️ 这里必须用 flex-basis:100%（父行已 flex-wrap），**不能**只写 width:100%：
+        该按钮带 shrink-0，width:100% 会让它在同一行里吃掉全部宽度，
+        把左侧说明文字压成 0 宽（实测表现为「一字一行」竖排文字）。 */
+  .candidate-shell [data-testid="device-check-speaker-play"] {
+    flex: 1 0 100%;
+    width: auto;
+    margin-top: 0.5rem;
+  }
+
+  .candidate-shell [data-testid="device-check"] > div:first-child {
+    align-items: stretch;
+  }
+
+  /* 悬浮在页面中间的加载/错误卡片：去掉固定高度带来的溢出风险 */
+  .candidate-shell [data-testid="device-check"] dl > div {
+    padding: 0.625rem;
+  }
+}

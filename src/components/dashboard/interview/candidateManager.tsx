@@ -3,6 +3,7 @@
 import { parsePdf } from "@/actions/parse-pdf";
 import Modal from "@/components/dashboard/Modal";
 import QuestionCard from "@/components/dashboard/interview/create-popup/questionCard";
+import ExportButton from "@/components/dashboard/interview/exportButton";
 import SummaryInfo from "@/components/dashboard/interview/summaryInfo";
 import { Button } from "@/components/ui/button";
 import type { CandidateInviteListItem } from "@/lib/data/candidates";
@@ -283,12 +284,13 @@ function CandidateManager({ interview, invites, responses, interviewers }: Props
               {interview.objective || interview.description || "尚未填写岗位要求。"}
             </p>
           </div>
-          <Button
-            className="shrink-0 bg-indigo-600 hover:bg-indigo-700"
-            onClick={() => setIsAdding(true)}
-          >
-            <Plus size={17} className="mr-2" /> 添加候选人
-          </Button>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {/* 导出的是本岗位真实候选人的评分与状态，不含简历全文/密钥/专属链接令牌。 */}
+            <ExportButton interviewId={interview.id} disabled={invites.length === 0} />
+            <Button className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setIsAdding(true)}>
+              <Plus size={17} className="mr-2" /> 添加候选人
+            </Button>
+          </div>
         </div>
 
         <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">

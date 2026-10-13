@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   deleteCandidatePersonalData,
   getPublicCandidateInviteByToken,
@@ -8,14 +9,10 @@ import {
   getAllEmailAddressesForInterview,
   getAllResponses,
 } from "@/lib/data/responses";
+import { resolveRetentionMonths } from "@/lib/data/retention";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import {
-  formatCnDate,
-  getPrivacyContactEmail,
-  getRetentionMonths,
-  retentionDeadline,
-} from "../consent";
+import { formatCnDate, getPrivacyContactEmail, retentionDeadline } from "../consent";
 
 /**
  * 候选人「数据删除申请 / 自助删除」页（P3 名下，新建页面）
@@ -80,7 +77,8 @@ export default async function DataRequestPage({ params, searchParams }: Props) {
 
   const interview = await getInterviewById(displayInterviewId);
   const canonicalId = interview?.id ?? null;
-  const months = getRetentionMonths();
+  // 留存月数与清理脚本共用同一个服务端配置来源，避免页面显示 6 个月、清理却按别的时长执行
+  const months = resolveRetentionMonths();
   const contactEmail = getPrivacyContactEmail();
   const basePath = `/call/${encodeURIComponent(interviewId)}/data-request`;
   const backHref = `/call/${encodeURIComponent(interview?.readable_slug || interviewId)}`;
@@ -145,9 +143,10 @@ export default async function DataRequestPage({ params, searchParams }: Props) {
       }
     }
 
-    // 留痕（服务端日志）。⚠️ 真正的审计表需要数据层加表 —— 已写进进度文件「阻塞与待确认」
+    // 留痕（服务端日志）。⚠️ 只记岗位、数量与邮箱的**不可逆摘要** —— 日志里不出现候选人邮箱原文。
+    const emailHash = createHash("sha256").update(email).digest("hex").slice(0, 12);
     console.info(
-      `[P3·候选人数据删除] interview=${canonicalId} email=${email} deleted=${deleted} at=${new Date().toISOString()}`,
+      `[P3·候选人数据删除] interview=${canonicalId} emailHash=${emailHash} deleted=${deleted} at=${new Date().toISOString()}`,
     );
 
     redirect(`${basePath}?done=1&count=${deleted}&interview=${encodeURIComponent(canonicalId)}`);
@@ -209,6 +208,12 @@ export default async function DataRequestPage({ params, searchParams }: Props) {
               {isCandidateInvite && (
                 <li>
                   招聘人员为本次专属面试关联的<strong>简历和个性化问题</strong>
+                </li>
+              )}
+              {isCandidateInvite && (
+                <li className="text-gray-600">
+                  你阅读隐私说明后的<strong>同意留痕记录</strong>
+                  （仅用于合规审计，按你的本次面试关联）
                 </li>
               )}
               <li className="text-gray-600">

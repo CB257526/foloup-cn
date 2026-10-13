@@ -8,3 +8,39 @@ services:
     environment:
       - NODE_ENV=production
     restart: unless-stopped
+
+# ══════════════════════════════════════════════════════════════════════
+#  个人信息留存到期清理：**本文件不配置任何定时任务，容器启动后不会自动删除数据。**
+#
+#  为什么故意不写 cron：自托管环境通常没有可靠的调度器，写一个"看起来会跑、
+#  实际永远不会执行"的定时任务，比没有更危险 —— 它会让人误以为留存承诺已经有执行者。
+#  这里只给出**可手工复现**的命令，调度交给部署方（宿主 crontab / 云厂商定时任务 /
+#  外部调度器都可以，只要能发一条带密钥的 POST）。
+#
+#  前提：.env 中配置了 RETENTION_API_KEY；只有在确实要删除时，才打开
+#        RETENTION_DELETE_ENABLED=1 与 RETENTION_DRY_RUN=0。
+#
+#  ── 方式 A（推荐）：调用容器内受保护的内部路由 ─────────────────────
+#  下面这条即使带了 apply:true，只要两个开关没配对，服务端也只报告不删除
+#  （报告里 mode 会是 dry-run），因此可以随时用来查看"哪些数据已到期"：
+#    docker compose exec foloup node -e "fetch('http://127.0.0.1:3000/api/retention-cleanup',{method:'POST',headers:{'content-type':'application/json','x-retention-key':process.env.RETENTION_API_KEY},body:JSON.stringify({apply:true})}).then(r=>r.text()).then(console.log)"
+#
+#  宿主 crontab 示例（每天 03:30 真实清理，日志自行留存）：
+#    30 3 * * * cd /srv/foloup && /usr/local/bin/docker compose exec -T foloup \
+#      node -e "fetch('http://127.0.0.1:3000/api/retention-cleanup',{method:'POST',headers:{'content-type':'application/json','x-retention-key':process.env.RETENTION_API_KEY},body:JSON.stringify({apply:true})}).then(r=>r.text()).then(console.log)" \
+#      >> /var/log/foloup-retention.log 2>&1
+#
+#  ── 方式 B：用脚本执行（需源码 + better-sqlite3）──────────────────
+#  ⚠️ 生产镜像里没有 src/（见 Dockerfile），所以脚本要在有源码的机器上，对着同一个
+#     SQLite 文件执行（挂载卷或备份文件）。去掉 --apply 即为只报告模式（默认）。
+#    cd FoloUp && SQLITE_DB_PATH=/path/to/foloup.db \
+#      RETENTION_DELETE_ENABLED=1 RETENTION_DRY_RUN=0 \
+#      node --experimental-strip-types --import ./scripts/ts-path-alias.mjs \
+#      scripts/retention-cleanup.ts --apply
+#
+#  ── 部署边界 ───────────────────────────────────────────────────────
+#  · 只清理「已完成 + 超过留存期」的面试；未使用 / 面试中 / 已撤销 / 缺少结束时间的
+#    记录一律跳过并计数（这些状态的保留政策需公司确认后再放开）。
+#  · 内部路由要求服务端密钥（x-retention-key 或 Bearer）；GET 一律 405；密钥未配置时 503。
+#  · 日志只记录数量与不可逆哈希，不含姓名、邮箱、简历、逐字稿、令牌与密钥。
+# ══════════════════════════════════════════════════════════════════════

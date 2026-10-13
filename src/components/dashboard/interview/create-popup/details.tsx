@@ -1,6 +1,7 @@
 "use client";
 
 import { createInterviewAction } from "@/app/actions/interviews";
+import CompetencyDimensionEditor from "@/components/dashboard/interview/competencyDimensionEditor";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -8,7 +9,9 @@ import {
   MAX_INTERVIEW_DURATION_MINUTES,
 } from "@/lib/constants";
 import type { InterviewBase } from "@/types/interview";
+import { DEFAULT_COMPETENCY_DIMENSIONS, normalizeCompetencyDimensions } from "@/types/interview";
 import type { Interviewer } from "@/types/interviewer";
+import type { CompetencyDimension } from "@/types/response";
 import { Briefcase, Clock3, Loader2, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -30,6 +33,10 @@ function DetailsPopup({ open, setOpen, interviewers, defaultDuration }: Props) {
   const [selectedInterviewer, setSelectedInterviewer] = useState<number>(interviewers[0]?.id ?? 0);
   const [questionCount, setQuestionCount] = useState(5);
   const [duration, setDuration] = useState(defaultDuration ?? DEFAULT_INTERVIEW_DURATION_MINUTES);
+  // 能力维度默认给出初筛常用的五项，HR 可增删改排序；保存前不会写库。
+  const [dimensions, setDimensions] = useState<CompetencyDimension[]>(
+    DEFAULT_COMPETENCY_DIMENSIONS,
+  );
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -42,11 +49,21 @@ function DetailsPopup({ open, setOpen, interviewers, defaultDuration }: Props) {
     setSelectedInterviewer(interviewers[0]?.id ?? 0);
     setQuestionCount(5);
     setDuration(defaultDuration ?? DEFAULT_INTERVIEW_DURATION_MINUTES);
+    setDimensions(DEFAULT_COMPETENCY_DIMENSIONS);
     setSaving(false);
   }, [open, defaultDuration, interviewers]);
 
   const handleCreate = async () => {
     if (!name.trim() || !objective.trim() || !selectedInterviewer) {
+      return;
+    }
+    // 至少保留一个带名称的能力维度，否则评分结果没有可解释的分项依据。
+    const normalizedDimensions = normalizeCompetencyDimensions(dimensions);
+    if (normalizedDimensions.length === 0) {
+      toast.error("请至少填写一个能力维度名称", {
+        description: "AI 评分会按这些维度逐项打分并给出候选人原话证据。",
+      });
+
       return;
     }
     setSaving(true);
@@ -62,6 +79,7 @@ function DetailsPopup({ open, setOpen, interviewers, defaultDuration }: Props) {
         questions: [],
         response_count: 0,
         logo_url: "",
+        competency_dimensions: normalizedDimensions,
       })) as { id?: string } | null;
 
       if (!created?.id) {
@@ -71,8 +89,10 @@ function DetailsPopup({ open, setOpen, interviewers, defaultDuration }: Props) {
         description: "接下来可逐位添加候选人并生成专属面试链接。",
       });
       setOpen(false);
+      // 只 push，不要再紧跟着 refresh：这两者在同一个事件循环里发出时，
+      // refresh 会把尚未完成的 push 顶掉 —— 岗位确实已落库，但页面停在 /dashboard，
+      // HR 会以为"没创建成功"。目标页是 force-dynamic，push 过去自然会拿到最新数据。
       router.push(`/interviews/${created.id}`);
-      router.refresh();
     } catch (error) {
       toast.error("创建岗位失败", {
         description: error instanceof Error ? error.message : "请稍后重试。",
@@ -180,6 +200,14 @@ function DetailsPopup({ open, setOpen, interviewers, defaultDuration }: Props) {
             />
           </span>
         </label>
+      </div>
+
+      <div className="mt-5">
+        <CompetencyDimensionEditor
+          dimensions={dimensions}
+          onChange={setDimensions}
+          disabled={saving}
+        />
       </div>
 
       <div className="mt-6 flex flex-col-reverse gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:justify-end">

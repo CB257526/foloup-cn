@@ -1,6 +1,8 @@
 import { normalizeInterviewDuration } from "@/lib/constants";
 import { fromBoolCol, fromJsonCol, getDb, toBoolCol, toJsonCol } from "@/lib/db";
 import type { Interview } from "@/types/interview";
+import { normalizeCompetencyDimensions } from "@/types/interview";
+import type { CompetencyDimension } from "@/types/response";
 
 /**
  * interview 表的服务端仓储（SQLite）。
@@ -9,7 +11,19 @@ import type { Interview } from "@/types/interview";
 
 type SqliteBinding = string | number | bigint | Buffer | null;
 
-const JSON_COLS = ["questions", "quotes", "insights", "respondents"] as const;
+/**
+ * JSON 列白名单。
+ *
+ * `competency_dimensions` 是 P0 预留、本任务（后续 P1）真正开始写入的岗位能力维度：
+ * 放进白名单后，创建/编辑岗位都会自动做 JSON 序列化，读取时在 fromRow 里解析回数组。
+ */
+const JSON_COLS = [
+  "questions",
+  "quotes",
+  "insights",
+  "respondents",
+  "competency_dimensions",
+] as const;
 const BOOL_COLS = ["is_active", "is_anonymous", "is_archived"] as const;
 const PLAIN_COLS = [
   "id",
@@ -82,6 +96,10 @@ function fromRow(row: unknown): Interview | null {
     quotes: fromJsonCol<unknown[]>(r.quotes, []),
     insights: fromJsonCol<unknown[]>(r.insights, []),
     respondents: fromJsonCol<unknown[]>(r.respondents, []),
+    // 维度在数据库里是 JSON 字符串，这里统一解析成数组，避免把裸字符串传给 HR 界面。
+    competency_dimensions: normalizeCompetencyDimensions(
+      fromJsonCol<CompetencyDimension[]>(r.competency_dimensions, []),
+    ),
     is_active: fromBoolCol(r.is_active),
     is_anonymous: fromBoolCol(r.is_anonymous),
     is_archived: fromBoolCol(r.is_archived),
