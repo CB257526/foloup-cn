@@ -4,6 +4,7 @@ import { FeedbackForm } from "@/components/call/feedbackForm";
 import {
   type RealtimeStatus,
   RealtimeVoiceClient,
+  appendRealtimeDebugEvent,
   type Turn,
 } from "@/components/call/realtimeClient";
 import { TabSwitchWarning, useTabSwitchPrevention } from "@/components/call/tabSwitchPrevention";
@@ -33,7 +34,15 @@ import type {
   TranscriptTurn,
 } from "@/types/response";
 import axios from "axios";
-import { AlarmClockIcon, ArrowUpRightSquareIcon, CheckCircleIcon, XCircleIcon } from "lucide-react";
+import {
+  AlarmClockIcon,
+  ArrowUpRightSquareIcon,
+  Camera,
+  CheckCircleIcon,
+  Loader2,
+  Mic,
+  XCircleIcon,
+} from "lucide-react";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -78,6 +87,129 @@ type ProctorSessionConfig = {
   intervalSeconds: number;
   confidenceThreshold: number;
 };
+
+type PermissionState = "loading" | "needed" | "requesting" | "granted" | "failed" | "not_required";
+
+type ProctorDebugMetrics = {
+  enabled: boolean;
+  captureCount: number;
+  skippedInFlightCount: number;
+  failureCount: number;
+  lastCaptureAt: number | null;
+  lastDrawMs: number | null;
+  maxDrawMs: number;
+  lastEncodeMs: number | null;
+  maxEncodeMs: number;
+  lastUploadMs: number | null;
+  maxUploadMs: number;
+  lastImageBytes: number | null;
+  longTaskCount: number;
+  maxLongTaskMs: number;
+};
+
+type VoiceDebugSnapshot = {
+  diagnosticEvents?: Array<{ atMs: number; type: string; valueMs?: number; detail?: string }>;
+  voice?: {
+    audioDeltaCount: number;
+    audioDeltaGapCount: number;
+    audioDeltaGapOver150MsCount: number;
+    audioDeltaGapAvgMs: number;
+    audioDeltaGapMaxMs: number;
+    lastAudioDeltaGapMs: number | null;
+    lastAudioDeltaAgeMs: number | null;
+    lastChunkDurationMs: number | null;
+    currentQueueMs: number;
+    minQueueMs: number | null;
+    maxQueueMs: number;
+    queueUnderrunCount: number;
+    speechStartedCount: number;
+    speechStartedWhilePlayingCount: number;
+    audioContextState: string;
+  };
+  proctor?: ProctorDebugMetrics;
+};
+
+function permissionStateText(state: PermissionState): string {
+  switch (state) {
+    case "loading":
+      return "正在检查";
+    case "requesting":
+      return "正在请求权限";
+    case "granted":
+      return "已就绪";
+    case "failed":
+      return "需要重新授权";
+    case "not_required":
+      return "当前未启用";
+    default:
+      return "未授权";
+  }
+}
+
+function PermissionCard({
+  icon,
+  title,
+  description,
+  actionLabel,
+  state,
+  error,
+  onRequest,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  actionLabel: string;
+  state: PermissionState;
+  error?: string;
+  onRequest: () => void;
+}) {
+  const ready = state === "granted";
+  const unavailable = state === "not_required";
+  const requesting = state === "requesting";
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3 text-left shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className={`rounded-lg p-2 ${ready ? "bg-emerald-50 text-emerald-600" : "bg-indigo-50 text-indigo-600"}`}>
+          {icon}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <p className="font-semibold text-slate-800">{title}</p>
+            <span className={`shrink-0 text-xs font-semibold ${ready ? "text-emerald-600" : unavailable ? "text-slate-400" : "text-amber-600"}`}>
+              {ready && <CheckCircleIcon className="mr-1 inline-block" size={14} />}
+              {permissionStateText(state)}
+            </span>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>
+          {error && <p className="mt-2 text-xs leading-5 text-red-600">{error}</p>}
+          <button
+            type="button"
+            onClick={onRequest}
+            disabled={ready || unavailable || requesting || state === "loading"}
+            className="mt-3 inline-flex h-9 items-center justify-center rounded-lg border border-indigo-200 px-3 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {requesting && <Loader2 className="mr-1.5 animate-spin" size={15} />}
+            {ready ? "已完成授权" : requesting ? "请求中" : state === "failed" ? "重新授权" : actionLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function readVoiceDebug(): VoiceDebugSnapshot {
+  if (typeof window === "undefined") return {};
+  return ((window as unknown as { __voiceDebug?: VoiceDebugSnapshot }).__voiceDebug ?? {});
+}
+
+function DebugMetric({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded border border-slate-200 bg-white px-2 py-1">
+      <span className="text-slate-500">{label}</span>
+      <strong className="ml-1 text-slate-800">{value}</strong>
+    </div>
+  );
+}
 
 const STATUS_TEXT: Record<RealtimeStatus, string> = {
   idle: "未连接",
@@ -151,6 +283,15 @@ function Call({ interview, candidate }: CallProps) {
   const [elapsed, setElapsed] = useState(0);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [proctorNotice, setProctorNotice] = useState("");
+  const [proctoringEnabled, setProctoringEnabled] = useState<boolean | null>(null);
+  const [permissionConfigLoaded, setPermissionConfigLoaded] = useState(false);
+  const [cameraPermission, setCameraPermission] = useState<PermissionState>("loading");
+  const [microphonePermission, setMicrophonePermission] = useState<PermissionState>("needed");
+  const [cameraPermissionError, setCameraPermissionError] = useState("");
+  const [microphonePermissionError, setMicrophonePermissionError] = useState("");
+  const [useTestAudio, setUseTestAudio] = useState(false);
+  const [voiceDebugEnabled, setVoiceDebugEnabled] = useState(false);
+  const [voiceDebug, setVoiceDebug] = useState<VoiceDebugSnapshot>({});
 
   const clientRef = useRef<RealtimeVoiceClient | null>(null);
   const callIdRef = useRef<string>("");
@@ -167,11 +308,29 @@ function Call({ interview, candidate }: CallProps) {
     useRef<(override?: { email?: string; name?: string }) => Promise<void>>();
   const lastUserResponseRef = useRef<HTMLDivElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  const microphoneStreamRef = useRef<MediaStream | null>(null);
+  const cameraPreviewRef = useRef<HTMLVideoElement | null>(null);
   const proctorVideoRef = useRef<HTMLVideoElement | null>(null);
   const proctorSessionRef = useRef<ProctorSessionConfig | null>(null);
   const proctorInFlightRef = useRef(false);
   const proctorTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const captureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const proctorDebugRef = useRef<ProctorDebugMetrics>({
+    enabled: false,
+    captureCount: 0,
+    skippedInFlightCount: 0,
+    failureCount: 0,
+    lastCaptureAt: null,
+    lastDrawMs: null,
+    maxDrawMs: 0,
+    lastEncodeMs: null,
+    maxEncodeMs: 0,
+    lastUploadMs: null,
+    maxUploadMs: 0,
+    lastImageBytes: null,
+    longTaskCount: 0,
+    maxLongTaskMs: 0,
+  });
 
   const { tabSwitchCount } = useTabSwitchPrevention();
   const tabSwitchRef = useRef(0);
@@ -184,8 +343,77 @@ function Call({ interview, candidate }: CallProps) {
   /* ── 音频来源：默认麦克风；?voiceInput=file 时用测试音频（自动化验证用） ── */
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
-    useTestAudioRef.current = qs.get("voiceInput") === "file";
+    const testAudioEnabled = qs.get("voiceInput") === "file";
+    useTestAudioRef.current = testAudioEnabled;
+    setUseTestAudio(testAudioEnabled);
     autoStartRef.current = qs.get("autostart") === "1";
+    setVoiceDebugEnabled(qs.get("voiceDebug") === "1");
+  }, []);
+
+  useEffect(() => {
+    if (!voiceDebugEnabled) return;
+    const observer = "PerformanceObserver" in window
+      ? new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            const duration = Number(entry.duration.toFixed(1));
+            proctorDebugRef.current.longTaskCount += 1;
+            proctorDebugRef.current.maxLongTaskMs = Math.max(
+              proctorDebugRef.current.maxLongTaskMs,
+              duration,
+            );
+            appendRealtimeDebugEvent({
+              atMs: Number(performance.now().toFixed(1)),
+              type: "long_task",
+              valueMs: duration,
+              detail: `主线程长任务 ${duration.toFixed(1)}ms`,
+            });
+          }
+        })
+      : null;
+    try {
+      observer?.observe({ type: "longtask", buffered: true });
+    } catch {
+      // 部分浏览器不支持 longtask 类型，其他监控仍然有效。
+    }
+    const timer = window.setInterval(() => {
+      const clientMetrics = clientRef.current?.getDebugMetrics();
+      const current = readVoiceDebug();
+      setVoiceDebug({
+        ...current,
+        voice: clientMetrics ?? current.voice,
+        proctor: { ...proctorDebugRef.current },
+      });
+    }, 500);
+    return () => {
+      observer?.disconnect();
+      window.clearInterval(timer);
+    };
+  }, [voiceDebugEnabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void axios
+      .get<{ enabled: boolean }>("/api/proctor/config")
+      .then(({ data }) => {
+        if (cancelled) return;
+        setPermissionConfigLoaded(true);
+        setProctoringEnabled(data.enabled);
+        setCameraPermission(data.enabled ? "needed" : "not_required");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProctorNotice("暂时无法读取摄像头监考设置，请刷新页面后重试。");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+      microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
+    };
   }, []);
 
   useEffect(() => {
@@ -261,19 +489,100 @@ function Call({ interview, candidate }: CallProps) {
       proctorTimerRef.current = null;
     }
     cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
     cameraStreamRef.current = null;
+    microphoneStreamRef.current = null;
     proctorSessionRef.current = null;
     setCameraStream(null);
+    setCameraPermission(proctoringEnabled ? "needed" : "not_required");
+    setMicrophonePermission("needed");
     if (proctorVideoRef.current) proctorVideoRef.current.srcObject = null;
+    if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = null;
   };
+
+  const requestCameraPermission = async () => {
+    if (Loading || cameraPermission === "requesting" || cameraPermission === "granted") return;
+    setCameraPermission("requesting");
+    setCameraPermissionError("");
+    cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    cameraStreamRef.current = null;
+    setCameraStream(null);
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("当前浏览器不支持摄像头，请使用 HTTPS 页面或更新浏览器。");
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 5, max: 10 } },
+      });
+      cameraStreamRef.current = stream;
+      setCameraStream(stream);
+      setCameraPermission("granted");
+      stream.getVideoTracks().forEach((track) => {
+        track.addEventListener("ended", () => {
+          setCameraPermission("failed");
+          setProctorNotice("摄像头已关闭或连接中断，请重新授权后再开始面试。");
+        });
+      });
+    } catch (error) {
+      setCameraPermission("failed");
+      setCameraPermissionError(
+        error instanceof Error ? error.message : "无法访问摄像头，请检查浏览器权限和摄像头设备。",
+      );
+    }
+  };
+
+  const requestMicrophonePermission = async () => {
+    if (Loading || microphonePermission === "requesting" || microphonePermission === "granted") return;
+    setMicrophonePermission("requesting");
+    setMicrophonePermissionError("");
+    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
+    microphoneStreamRef.current = null;
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("当前浏览器不支持麦克风，请使用 HTTPS 页面或更新浏览器。");
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
+      microphoneStreamRef.current = stream;
+      setMicrophonePermission("granted");
+      stream.getAudioTracks().forEach((track) => {
+        track.addEventListener("ended", () => {
+          if (microphoneStreamRef.current === stream) setMicrophonePermission("failed");
+        });
+      });
+    } catch (error) {
+      setMicrophonePermission("failed");
+      setMicrophonePermissionError(
+        error instanceof Error ? error.message : "无法访问麦克风，请检查浏览器权限和设备。",
+      );
+    }
+  };
+
+  const mediaPermissionsReady =
+    permissionConfigLoaded &&
+    (proctoringEnabled ? cameraPermission === "granted" : true) &&
+    (useTestAudio || microphonePermission === "granted");
 
   const captureProctorFrame = async () => {
     const session = proctorSessionRef.current;
     const video = proctorVideoRef.current;
-    if (!session?.enabled || !session.token || !video || proctorInFlightRef.current) return;
+    if (!session?.enabled || !session.token || !video) return;
+    if (proctorInFlightRef.current) {
+      proctorDebugRef.current.skippedInFlightCount += 1;
+      return;
+    }
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || video.videoWidth < 1) return;
 
     proctorInFlightRef.current = true;
+    let uploadStartedAt = 0;
     try {
       const canvas = captureCanvasRef.current || document.createElement("canvas");
       captureCanvasRef.current = canvas;
@@ -283,14 +592,37 @@ function Call({ interview, candidate }: CallProps) {
       canvas.height = targetHeight;
       const context = canvas.getContext("2d", { alpha: false });
       if (!context) throw new Error("无法读取摄像头画面。");
+      const drawStartedAt = performance.now();
       context.drawImage(video, 0, 0, targetWidth, targetHeight);
+      const drawMs = Number((performance.now() - drawStartedAt).toFixed(1));
+      const encodeStartedAt = performance.now();
       const imageDataUrl = canvas.toDataURL("image/jpeg", 0.62);
+      const encodeMs = Number((performance.now() - encodeStartedAt).toFixed(1));
+      const imageBytes = Math.max(0, Math.round((imageDataUrl.length * 3) / 4));
+      proctorDebugRef.current = {
+        ...proctorDebugRef.current,
+        enabled: true,
+        captureCount: proctorDebugRef.current.captureCount + 1,
+        lastCaptureAt: Date.now(),
+        lastDrawMs: drawMs,
+        maxDrawMs: Math.max(proctorDebugRef.current.maxDrawMs, drawMs),
+        lastEncodeMs: encodeMs,
+        maxEncodeMs: Math.max(proctorDebugRef.current.maxEncodeMs, encodeMs),
+        lastImageBytes: imageBytes,
+      };
+      appendRealtimeDebugEvent({
+        atMs: Number(performance.now().toFixed(1)),
+        type: "screenshot_encode",
+        valueMs: encodeMs,
+        detail: `截图编码 ${encodeMs.toFixed(1)}ms，约 ${imageBytes} 字节`,
+      });
       const snapshot = clientRef.current?.snapshot();
       const transcript = (snapshot?.turns ?? []).map((turn) => ({
         role: turn.role,
         content: turn.content,
         offset_ms: turn.offset_ms,
       }));
+      uploadStartedAt = performance.now();
       const response = await axios.post("/api/proctor/analyze", {
         callId: callIdRef.current,
         token: session.token,
@@ -323,12 +655,24 @@ function Call({ interview, candidate }: CallProps) {
         await finishCall("proctoring_terminated");
       }
     } catch (error) {
+      proctorDebugRef.current.failureCount += 1;
       const statusCode = axios.isAxiosError(error) ? error.response?.status : undefined;
       if (statusCode !== 429) {
         console.error("摄像头截图分析失败：", error instanceof Error ? error.message : String(error));
         setProctorNotice("摄像头截图暂时无法分析，面试会继续进行；请保持摄像头开启。");
       }
     } finally {
+      if (uploadStartedAt > 0) {
+        const uploadMs = Number((performance.now() - uploadStartedAt).toFixed(1));
+        proctorDebugRef.current.lastUploadMs = uploadMs;
+        proctorDebugRef.current.maxUploadMs = Math.max(proctorDebugRef.current.maxUploadMs, uploadMs);
+        appendRealtimeDebugEvent({
+          atMs: Number(performance.now().toFixed(1)),
+          type: "screenshot_upload",
+          valueMs: uploadMs,
+          detail: `截图请求耗时 ${uploadMs.toFixed(1)}ms`,
+        });
+      }
       proctorInFlightRef.current = false;
     }
   };
@@ -345,11 +689,13 @@ function Call({ interview, candidate }: CallProps) {
   }, [isStarted, isEnded]);
 
   useEffect(() => {
-    if (!cameraStream || !proctorVideoRef.current) return;
-    proctorVideoRef.current.srcObject = cameraStream;
-    void proctorVideoRef.current.play().catch(() => {
+    if (!cameraStream) return;
+    if (proctorVideoRef.current) proctorVideoRef.current.srcObject = cameraStream;
+    if (cameraPreviewRef.current) cameraPreviewRef.current.srcObject = cameraStream;
+    void cameraPreviewRef.current?.play().catch(() => {
       setProctorNotice("摄像头预览未能自动播放，但截图监考仍会尝试继续。");
     });
+    void proctorVideoRef.current?.play().catch(() => undefined);
   }, [cameraStream]);
 
   const handleFeedbackSubmit = async (formData: Omit<FeedbackData, "interview_id">) => {
@@ -381,7 +727,6 @@ function Call({ interview, candidate }: CallProps) {
       return;
     }
     endedRef.current = true;
-    stopProctoring();
 
     const client = clientRef.current;
     const snapshot = client?.snapshot();
@@ -452,12 +797,26 @@ function Call({ interview, candidate }: CallProps) {
     }
 
     // 只有拿到服务端完成结果后才切换到结束页。
+    stopProctoring();
     setIsEnded(true);
   };
 
   startConversationRef.current = async (override) => {
     const useEmail = override?.email ?? email;
     const useName = override?.name ?? name;
+    if (!mediaPermissionsReady) {
+      toast.warning("请先分别完成摄像头和麦克风授权。");
+      return;
+    }
+    if (
+      (proctoringEnabled && !cameraStreamRef.current?.getVideoTracks().some((track) => track.readyState === "live")) ||
+      (!useTestAudioRef.current && !microphoneStreamRef.current?.getAudioTracks().some((track) => track.readyState === "live"))
+    ) {
+      setCameraPermission((state) => proctoringEnabled ? "failed" : state);
+      setMicrophonePermission((state) => useTestAudioRef.current ? state : "failed");
+      toast.error("摄像头或麦克风连接已中断，请重新授权后再开始。");
+      return;
+    }
     setLoading(true);
 
     try {
@@ -476,34 +835,12 @@ function Call({ interview, candidate }: CallProps) {
         return;
       }
 
-      // 摄像头权限在确定候选人可参加后、建立语音连接前请求，拒绝时不创建面试会话。
-      const proctorConfig = (await axios.get<{ enabled: boolean }>("/api/proctor/config")).data;
-      if (proctorConfig.enabled) {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("当前浏览器无法访问摄像头，请改用支持摄像头的安全浏览器。");
-        }
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: false,
-            video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 5, max: 10 } },
-          });
-          cameraStreamRef.current = stream;
-          setCameraStream(stream);
-          if (proctorVideoRef.current) {
-            proctorVideoRef.current.srcObject = stream;
-            await proctorVideoRef.current.play();
-          }
-          stream.getVideoTracks().forEach((track) => {
-            track.addEventListener("ended", () => {
-              setProctorNotice("摄像头已关闭或连接中断，请重新开启摄像头并联系招聘人员。");
-              if (isStartedRef.current && !endedRef.current) {
-                toast.error("摄像头连接中断，请联系招聘人员；本次面试仍可继续。");
-              }
-            });
-          });
-        } catch {
-          throw new Error("需要允许使用摄像头才能开始本次面试，请检查浏览器权限和摄像头设备。");
-        }
+      // 两项媒体权限应在开始页预先分别授权；正式开始只复用既有流。
+      if (proctoringEnabled && !cameraStreamRef.current) {
+        throw new Error("请先完成摄像头授权，再开始面试。");
+      }
+      if (!useTestAudioRef.current && !microphoneStreamRef.current) {
+        throw new Error("请先完成麦克风授权，再开始面试。");
       }
 
       // ① 向服务端要一份会话参数（模型 / 音色 / 中文人设提示词 / 密钥）
@@ -528,7 +865,7 @@ function Call({ interview, candidate }: CallProps) {
       const cfg = registered.data;
 
       if (!cfg?.callId || !cfg?.apiKey) {
-        throw new Error("服务端未返回有效的会话参数（请确认服务端已配置 QWEN_API_KEY）");
+        throw new Error("服务端未返回有效的会话参数（请确认系统设置中的实时语音地址和 API 密钥已配置）");
       }
 
       // ② 建立实时语音会话（浏览器直连平台 WebSocket）。只有 start 成功返回后，
@@ -567,11 +904,20 @@ function Call({ interview, candidate }: CallProps) {
             greeting: cfg.greeting,
             session: cfg.session,
           },
-          { useTestAudio: useTestAudioRef.current },
+          {
+            useTestAudio: useTestAudioRef.current,
+            micStream: microphoneStreamRef.current ?? undefined,
+          },
         ),
         15_000,
         "语音连接超时，请检查网络后重试",
       );
+      // 客户端已克隆预授权麦克风流，释放预检轨道，避免同一设备重复占用。
+      if (microphoneStreamRef.current) {
+        const authorizedStream = microphoneStreamRef.current;
+        microphoneStreamRef.current = null;
+        authorizedStream.getTracks().forEach((track) => track.stop());
+      }
 
       // ③ 语音连接成功后由服务端生成真实开始时间和到期时间。
       const session = await ResponseService.startCallSession({
@@ -624,6 +970,7 @@ function Call({ interview, candidate }: CallProps) {
       await finishCall("candidate_ended");
       setLoading(false);
     } else {
+      stopProctoring();
       setIsEnded(true);
     }
   };
@@ -645,10 +992,50 @@ function Call({ interview, candidate }: CallProps) {
   return (
     <div className="flex justify-center items-center min-h-screen bg-gray-100">
       {isStarted && <TabSwitchWarning />}
-      <div className={cameraStream ? "fixed bottom-4 right-4 z-30 w-36 overflow-hidden rounded-xl border-2 border-indigo-300 bg-white shadow-lg sm:w-48" : "hidden"}>
+      <div className={cameraStream && isStarted && !isEnded ? "fixed bottom-4 right-4 z-30 w-36 overflow-hidden rounded-xl border-2 border-indigo-300 bg-white shadow-lg sm:w-48" : "hidden"}>
         <video ref={proctorVideoRef} autoPlay muted playsInline className="aspect-video w-full object-cover" />
         <p className="px-2 py-1 text-center text-xs font-medium text-slate-700">摄像头监考已开启</p>
       </div>
+      {voiceDebugEnabled && (isStarted || isEnded) && (
+        <div className="fixed bottom-4 left-4 z-40 max-w-[min(92vw,520px)] rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs font-normal text-slate-700 shadow-lg">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <strong className="text-amber-900">语音诊断面板</strong>
+            <button
+              type="button"
+              className="rounded border border-amber-300 bg-white px-2 py-0.5 text-amber-900"
+              onClick={() => {
+                const current = readVoiceDebug();
+                const payload = JSON.stringify(
+                  { voice: current.voice ?? null, proctor: { ...proctorDebugRef.current } },
+                  null,
+                  2,
+                );
+                void navigator.clipboard?.writeText(payload);
+                toast.success("诊断数据已复制");
+              }}
+            >
+              复制数据
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+            <DebugMetric label="音频分片间隔" value={`${voiceDebug.voice?.lastAudioDeltaGapMs ?? "-"} ms`} />
+            <DebugMetric label="最大分片间隔" value={`${voiceDebug.voice?.audioDeltaGapMaxMs ?? "-"} ms`} />
+            <DebugMetric label=">150ms 间隔" value={voiceDebug.voice?.audioDeltaGapOver150MsCount ?? "-"} />
+            <DebugMetric label="当前播放余量" value={`${voiceDebug.voice?.currentQueueMs ?? "-"} ms`} />
+            <DebugMetric label="最小播放余量" value={`${voiceDebug.voice?.minQueueMs ?? "-"} ms`} />
+            <DebugMetric label="疑似断档" value={voiceDebug.voice?.queueUnderrunCount ?? "-"} />
+            <DebugMetric label="VAD 播放中断" value={voiceDebug.voice?.speechStartedWhilePlayingCount ?? "-"} />
+            <DebugMetric label="长任务次数" value={voiceDebug.proctor?.longTaskCount ?? "-"} />
+            <DebugMetric label="截图编码" value={`${voiceDebug.proctor?.lastEncodeMs ?? "-"} ms`} />
+            <DebugMetric label="截图绘制" value={`${voiceDebug.proctor?.lastDrawMs ?? "-"} ms`} />
+            <DebugMetric label="最长任务" value={`${voiceDebug.proctor?.maxLongTaskMs ?? "-"} ms`} />
+            <DebugMetric label="截图上传" value={`${voiceDebug.proctor?.lastUploadMs ?? "-"} ms`} />
+          </div>
+          <p className="mt-2 text-[11px] text-amber-800">
+            重点观察：卡顿时播放余量是否接近 0、分片间隔是否超过 150ms、是否同时出现长任务或截图编码尖峰。
+          </p>
+        </div>
+      )}
       <div className="bg-white rounded-md md:w-[80%] w-[90%]">
         <Card className="h-[88vh] rounded-lg border-2 border-b-4 border-r-4 border-black text-xl font-bold transition-all  md:block dark:border-white ">
           <div>
@@ -683,7 +1070,7 @@ function Call({ interview, candidate }: CallProps) {
 
             {/* ─────────── 开始页 ─────────── */}
             {!isStarted && !isEnded && !isOldUser && (
-              <div className="w-[calc(100%-1rem)] max-w-[400px] min-w-0 mx-auto mt-2 border border-indigo-200 rounded-md p-2 m-2 bg-slate-50">
+              <div className="w-[calc(100%-1rem)] max-w-[560px] min-w-0 mx-auto mt-2 border border-indigo-200 rounded-md p-2 m-2 bg-slate-50">
                 {proctorNotice && <p role="status" className="mb-3 rounded-lg bg-amber-50 p-3 text-sm font-normal text-amber-900">{proctorNotice}</p>}
                 <div>
                   {interview?.logo_url && (
@@ -700,8 +1087,7 @@ function Call({ interview, candidate }: CallProps) {
                   <div className="p-2 font-normal text-sm mb-4 whitespace-pre-line">
                     {interview?.description}
                     <p className="font-bold text-sm">
-                      {"\n"}请调高音量，并在浏览器提示时允许使用麦克风。建议佩戴耳机，并尽量在安静的
-                      环境下进行。
+                      {"\n"}请分别完成下方的摄像头和麦克风授权。建议佩戴耳机，并尽量在安静的环境下进行。
                       {"\n\n"}注意：切换浏览器标签页会被记录。
                     </p>
                   </div>
@@ -736,6 +1122,42 @@ function Call({ interview, candidate }: CallProps) {
                     )
                   )}
                 </div>
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  <PermissionCard
+                    icon={<Camera size={18} />}
+                    title="摄像头权限"
+                    actionLabel="授权摄像头"
+                    description={
+                      proctoringEnabled
+                        ? "面试前必须开启摄像头。授权后会显示本地预览，面试中按设定间隔进行截图分析。"
+                        : "系统当前未启用摄像头监考，不会采集摄像头画面。"
+                    }
+                    state={cameraPermission}
+                    error={cameraPermissionError}
+                    onRequest={() => void requestCameraPermission()}
+                  />
+                  <PermissionCard
+                    icon={<Mic size={18} />}
+                    title="麦克风录音权限"
+                    actionLabel="授权麦克风"
+                    description="用于实时语音面试和语音识别；只实时传输，不保存音频文件。授权后会复用这条麦克风流。"
+                    state={useTestAudio ? "granted" : microphonePermission}
+                    error={microphonePermissionError}
+                    onRequest={() => void requestMicrophonePermission()}
+                  />
+                </div>
+                {cameraStream && (
+                  <div className="mt-3 overflow-hidden rounded-xl border border-indigo-100 bg-slate-900">
+                    <video
+                      ref={cameraPreviewRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="aspect-video max-h-48 w-full object-cover"
+                    />
+                    <p className="px-3 py-2 text-center text-xs font-normal text-white">摄像头预览正常，面试时会继续保持开启</p>
+                  </div>
+                )}
                 <div className="w-[80%] flex flex-row mx-auto justify-center items-center align-middle">
                   <Button
                     className="min-w-20 h-10 rounded-lg flex flex-row justify-center mb-8"
@@ -745,11 +1167,13 @@ function Call({ interview, candidate }: CallProps) {
                     }}
                     disabled={
                       Loading ||
+                      !permissionConfigLoaded ||
+                      !mediaPermissionsReady ||
                       (!candidate && !interview?.is_anonymous && (!isValidEmail || !name))
                     }
                     onClick={() => startConversationRef.current?.()}
                   >
-                    {!Loading ? "开始面试" : <MiniLoader />}
+                    {!Loading ? (mediaPermissionsReady ? "开始面试" : "请先完成设备授权") : <MiniLoader />}
                   </Button>
                   <AlertDialog>
                     {/* asChild：避免 AlertDialogTrigger 再套一层 button（原版会产生 button 嵌套 button 的水合警告） */}

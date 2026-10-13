@@ -11,7 +11,7 @@ import { getRuntimeAppSettings } from "@/lib/data/settings";
  *   3. 换供应商（甚至换成别的兼容协议服务）只需改这一个文件。
  *
  * ── 环境变量（全部可选，带默认值；不配也能跑）───────────────────────
- *   LLM_BASE_URL     默认 https://maas.qianwenaiapi.com/compatible-mode/v1
+ *   LLM_BASE_URL     默认 https://dashscope.aliyuncs.com/compatible-mode/v1
  *   LLM_API_KEY      平台密钥（必填，否则运行时报错并给出提示）
  *   LLM_MODEL        默认 deepseek-v4.1-flash（1 元/百万 tok，最便宜）
  *   LLM_MAX_TOKENS   默认 4000（⚠️ 不要低于 2000，见下）
@@ -81,10 +81,7 @@ export function getLlmConfig(overrides?: Partial<LlmConfig>): LlmConfig {
 
 type ChatMessageContent =
   | string
-  | Array<
-      | { type: "text"; text: string }
-      | { type: "image_url"; image_url: { url: string } }
-    >;
+  | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
 
 interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -148,7 +145,7 @@ export async function chatCompletion({
 
   if (!config.apiKey) {
     throw new Error(
-      "[LLM] 未配置平台 API 密钥。请在系统设置中配置，或在服务端环境变量 QWEN_API_KEY 中提供。",
+      "[LLM] 未配置平台 API 密钥。请在系统设置中配置，或在服务端环境变量 LLM_API_KEY / QWEN_API_KEY 中提供。",
     );
   }
 
@@ -258,7 +255,8 @@ export async function chatCompletion({
         );
       }
       // 只有超时与网络类错误才重试；语义错误（正文为空、4xx）立即抛出
-      const retriable = aborted || /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up/i.test(err.message);
+      const retriable =
+        aborted || /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|socket hang up/i.test(err.message);
       if (!retriable || attempt === retries) throw lastError;
     } finally {
       clearTimeout(timer);
@@ -301,4 +299,3 @@ export function extractJson<T = unknown>(raw: string): T {
       `原文前 200 字：${text.slice(0, 200)}`,
   );
 }
-

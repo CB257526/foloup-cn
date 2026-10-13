@@ -68,6 +68,54 @@ export type RealtimeStats = {
   events: Record<string, number>;
 };
 
+/**
+ * 浏览器端语音链路诊断指标。
+ *
+ * 这些数据只写入 `window.__voiceDebug`，用于定位实际播放卡顿，不参与业务判定，
+ * 也不会随着普通面试结果额外上传。通过 `?voiceDebug=1` 才会在页面显示诊断面板。
+ */
+export type RealtimeDebugMetrics = {
+  audioDeltaCount: number;
+  audioDeltaGapCount: number;
+  audioDeltaGapOver150MsCount: number;
+  audioDeltaGapAvgMs: number;
+  audioDeltaGapMaxMs: number;
+  lastAudioDeltaGapMs: number | null;
+  lastAudioDeltaAgeMs: number | null;
+  lastChunkDurationMs: number | null;
+  currentQueueMs: number;
+  minQueueMs: number | null;
+  maxQueueMs: number;
+  queueUnderrunCount: number;
+  speechStartedCount: number;
+  speechStartedWhilePlayingCount: number;
+  audioContextState: AudioContextState | "uninitialized";
+};
+
+/** 浏览器端的诊断时间线，仅用于把卡顿与同一时刻的任务关联起来。 */
+export type RealtimeDebugEvent = {
+  atMs: number;
+  type: string;
+  valueMs?: number;
+  detail?: string;
+};
+
+const DEBUG_EVENT_LIMIT = 100;
+
+export function appendRealtimeDebugEvent(event: RealtimeDebugEvent): void {
+  if (typeof window === "undefined") return;
+  const debugWindow = window as unknown as Record<string, any>;
+  const current = debugWindow.__voiceDebug ?? {};
+  const events: RealtimeDebugEvent[] = Array.isArray(current.diagnosticEvents)
+    ? current.diagnosticEvents
+    : [];
+  events.push(event);
+  if (events.length > DEBUG_EVENT_LIMIT) {
+    events.splice(0, events.length - DEBUG_EVENT_LIMIT);
+  }
+  debugWindow.__voiceDebug = { ...current, diagnosticEvents: events };
+}
+
 export type SessionConfig = {
   /** WebSocket 基址，形如 wss://host/api-ws/v1/realtime（不要带查询参数） */
   wsUrl: string;
@@ -155,6 +203,26 @@ function resample(input: Float32Array, from: number, to: number): Float32Array {
   return out;
 }
 
+function createDebugMetrics(): RealtimeDebugMetrics {
+  return {
+    audioDeltaCount: 0,
+    audioDeltaGapCount: 0,
+    audioDeltaGapOver150MsCount: 0,
+    audioDeltaGapAvgMs: 0,
+    audioDeltaGapMaxMs: 0,
+    lastAudioDeltaGapMs: null,
+    lastAudioDeltaAgeMs: null,
+    lastChunkDurationMs: null,
+    currentQueueMs: 0,
+    minQueueMs: null,
+    maxQueueMs: 0,
+    queueUnderrunCount: 0,
+    speechStartedCount: 0,
+    speechStartedWhilePlayingCount: 0,
+    audioContextState: "uninitialized",
+  };
+}
+
 /* ────────────────── 客户端 ────────────────── */
 
 export class RealtimeVoiceClient {
@@ -178,6 +246,8 @@ export class RealtimeVoiceClient {
   private speechStoppedAt = 0;
   private status: RealtimeStatus = "idle";
   private speaker: "agent" | "user" | null = null;
+  private lastAudioDeltaAt = 0;
+  private audioDeltaGapTotalMs = 0;
 
   private stats: RealtimeStats = {
     latency_samples: [],
@@ -186,6 +256,7 @@ export class RealtimeVoiceClient {
     audio_bytes: 0,
     events: {},
   };
+  private debug: RealtimeDebugMetrics = createDebugMetrics();
 
   constructor(callbacks: ClientCallbacks = {}) {
     this.cb = callbacks;
@@ -198,12 +269,18 @@ export class RealtimeVoiceClient {
    * Promise 在「WebSocket 打开 + 音频就绪 + session.update 已下发」后 resolve；
    * 麦克风被拒 / 连接失败时 reject（UI 据此提示并留在开始页，而不是假装开始了）。
    */
-  async start(cfg: SessionConfig, opts: { useTestAudio?: boolean } = {}): Promise<void> {
+  async start(
+    cfg: SessionConfig,
+    opts: { useTestAudio?: boolean; micStream?: MediaStream } = {},
+  ): Promise<void> {
     this.stop();
     this.cfg = cfg;
     this.turns = [];
     this.startedAt = Date.now();
     this.speechStoppedAt = 0;
+    this.lastAudioDeltaAt = 0;
+    this.audioDeltaGapTotalMs = 0;
+    this.debug = createDebugMetrics();
     this.stats = {
       latency_samples: [],
       interruption_count: 0,
@@ -232,7 +309,7 @@ export class RealtimeVoiceClient {
       this.ws = new WebSocket(url);
       this.ws.onopen = async () => {
         try {
-          await this.startAudio(opts.useTestAudio ?? false);
+          await this.startAudio(opts.useTestAudio ?? false, opts.micStream);
         } catch (error) {
           settleFail(
             `无法打开音频输入：${error instanceof Error ? error.message : String(error)}（请检查麦克风权限）`,
@@ -351,6 +428,22 @@ export class RealtimeVoiceClient {
     return this.status;
   }
 
+  /** 返回实时播放余量，供开启诊断面板时定期读取。 */
+  getDebugMetrics(): RealtimeDebugMetrics {
+    const queueMs = this.outCtx
+      ? Math.max(0, (this.playCursor - this.outCtx.currentTime) * 1000)
+      : 0;
+    return {
+      ...this.debug,
+      currentQueueMs: Number(queueMs.toFixed(1)),
+      lastAudioDeltaAgeMs:
+        this.lastAudioDeltaAt > 0
+          ? Number((performance.now() - this.lastAudioDeltaAt).toFixed(1))
+          : null,
+      audioContextState: this.outCtx?.state ?? "uninitialized",
+    };
+  }
+
   /* ────── 音频上行 ────── */
 
   private createInContext(): AudioContext {
@@ -362,7 +455,7 @@ export class RealtimeVoiceClient {
     }
   }
 
-  private async startAudio(useTestAudio: boolean): Promise<void> {
+  private async startAudio(useTestAudio: boolean, providedMicStream?: MediaStream): Promise<void> {
     const ctx = this.createInContext();
     this.micCtx = ctx;
     await ctx.resume();
@@ -399,14 +492,17 @@ export class RealtimeVoiceClient {
       return;
     }
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
+    // 开始页已经单独取得麦克风权限时直接复用这条流，避免点击“开始面试”再次弹权限框。
+    const stream =
+      (providedMicStream ? providedMicStream.clone() : null) ||
+      (await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      }));
     this.micStream = stream;
     ctx.createMediaStreamSource(stream).connect(worklet);
   }
@@ -433,7 +529,7 @@ export class RealtimeVoiceClient {
       this.stats.audio_bytes += i16.byteLength;
       this.send({ type: "input_audio_buffer.append", audio: b64Encode(i16) });
     }
-    this.publishDebug();
+    this.publishDebug(false);
   }
 
   private cleanupAudio(): void {
@@ -481,6 +577,12 @@ export class RealtimeVoiceClient {
     const at = Math.max(ctx.currentTime + 0.02, this.playCursor);
     src.start(at);
     this.playCursor = at + buffer.duration;
+    this.debug.currentQueueMs = Math.max(0, (this.playCursor - ctx.currentTime) * 1000);
+    this.debug.minQueueMs =
+      this.debug.minQueueMs === null
+        ? this.debug.currentQueueMs
+        : Math.min(this.debug.minQueueMs, this.debug.currentQueueMs);
+    this.debug.maxQueueMs = Math.max(this.debug.maxQueueMs, this.debug.currentQueueMs);
     this.sources.push(src);
     src.onended = () => {
       this.sources = this.sources.filter((s) => s !== src);
@@ -525,6 +627,15 @@ export class RealtimeVoiceClient {
     switch (type) {
       // 服务端 VAD：用户开口 → 立刻闭嘴
       case "input_audio_buffer.speech_started":
+        this.debug.speechStartedCount++;
+        if (this.outCtx && this.playCursor > this.outCtx.currentTime) {
+          this.debug.speechStartedWhilePlayingCount++;
+          appendRealtimeDebugEvent({
+            atMs: Number(performance.now().toFixed(1)),
+            type: "vad_interrupt",
+            valueMs: Number(((this.playCursor - this.outCtx.currentTime) * 1000).toFixed(1)),
+          });
+        }
         this.stopPlayback(true);
         this.setSpeaker("user");
         break;
@@ -567,7 +678,47 @@ export class RealtimeVoiceClient {
       // AI 语音（PCM 24k）
       case "response.audio.delta":
       case "response.output_audio.delta": {
+        const receivedAt = performance.now();
+        const queueBeforeMs = this.outCtx
+          ? Math.max(0, (this.playCursor - this.outCtx.currentTime) * 1000)
+          : 0;
         const i16 = b64DecodeI16(d.delta || "");
+        const chunkDurationMs = (i16.length / SAMPLE_RATE_OUT) * 1000;
+        this.debug.audioDeltaCount++;
+        this.debug.lastChunkDurationMs = Number(chunkDurationMs.toFixed(1));
+        if (this.lastAudioDeltaAt > 0) {
+          const gapMs = receivedAt - this.lastAudioDeltaAt;
+          this.audioDeltaGapTotalMs += gapMs;
+          this.debug.audioDeltaGapCount++;
+          this.debug.lastAudioDeltaGapMs = Number(gapMs.toFixed(1));
+          this.debug.audioDeltaGapAvgMs = Number(
+            (this.audioDeltaGapTotalMs / this.debug.audioDeltaGapCount).toFixed(1),
+          );
+          this.debug.audioDeltaGapMaxMs = Math.max(
+            this.debug.audioDeltaGapMaxMs,
+            Number(gapMs.toFixed(1)),
+          );
+          if (gapMs > 150) {
+            this.debug.audioDeltaGapOver150MsCount++;
+            appendRealtimeDebugEvent({
+              atMs: Number(receivedAt.toFixed(1)),
+              type: "audio_delta_gap",
+              valueMs: Number(gapMs.toFixed(1)),
+              detail: `分片间隔 ${gapMs.toFixed(1)}ms，分片前队列余量 ${queueBeforeMs.toFixed(1)}ms`,
+            });
+          }
+        }
+        this.lastAudioDeltaAt = receivedAt;
+        // 排除正常的约 20ms 起播余量，只把真正接近见底的队列记录为疑似断档。
+        if (this.debug.audioDeltaCount > 1 && queueBeforeMs < 8) {
+          this.debug.queueUnderrunCount++;
+          appendRealtimeDebugEvent({
+            atMs: Number(receivedAt.toFixed(1)),
+            type: "audio_queue_low",
+            valueMs: Number(queueBeforeMs.toFixed(1)),
+            detail: `新分片到达前播放队列仅剩 ${queueBeforeMs.toFixed(1)}ms`,
+          });
+        }
         const at = this.playChunk(i16);
         this.setSpeaker("agent");
         if (this.speechStoppedAt && this.outCtx) {
@@ -592,7 +743,7 @@ export class RealtimeVoiceClient {
         break;
     }
 
-    this.publishDebug();
+    this.publishDebug(true);
   }
 
   /* ────── 转录维护 ────── */
@@ -671,21 +822,36 @@ export class RealtimeVoiceClient {
   }
 
   /** 自动化验证用的调试出口（无头浏览器里读它做断言） */
-  private publishDebug(): void {
+  private publishDebug(includeTurns = false): void {
     if (typeof window === "undefined") {
       return;
     }
-    const samples = this.stats.latency_samples;
-    (window as unknown as Record<string, unknown>).__voiceDebug = {
+    const debugWindow = window as unknown as Record<string, any>;
+    const current = debugWindow.__voiceDebug as Record<string, unknown> | undefined;
+    const queueMs = this.outCtx
+      ? Math.max(0, (this.playCursor - this.outCtx.currentTime) * 1000)
+      : 0;
+    this.debug.currentQueueMs = Number(queueMs.toFixed(1));
+    this.debug.lastAudioDeltaAgeMs =
+      this.lastAudioDeltaAt > 0 ? Number((performance.now() - this.lastAudioDeltaAt).toFixed(1)) : null;
+    this.debug.audioContextState = this.outCtx?.state ?? "uninitialized";
+    const next: Record<string, unknown> = {
+      ...(current ?? {}),
       status: this.status,
       speaker: this.speaker,
       chunks: this.stats.audio_chunks,
       bytes: this.stats.audio_bytes,
       interruptions: this.stats.interruption_count,
       events: this.stats.events,
-      latencies: samples,
-      latencyAvg: samples.length ? samples.reduce((a, b) => a + b, 0) / samples.length : 0,
-      turns: this.turns.map((t) => ({ ...t })),
+      latencies: this.stats.latency_samples,
+      latencyAvg: this.stats.latency_samples.length
+        ? this.stats.latency_samples.reduce((a, b) => a + b, 0) / this.stats.latency_samples.length
+        : 0,
+      voice: { ...this.debug },
     };
+    if (includeTurns || !current?.turns) {
+      next.turns = this.turns.map((t) => ({ ...t }));
+    }
+    debugWindow.__voiceDebug = next;
   }
 }

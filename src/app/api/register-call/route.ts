@@ -9,11 +9,11 @@ import {
   normalizeInterviewDuration,
 } from "@/lib/constants";
 import { getCandidateRegistrationContextByToken } from "@/lib/data/candidates";
+import { getInterviewer } from "@/lib/data/interviewers";
+import { getInterviewById } from "@/lib/data/interviews";
+import { isCandidateEligibleForInterview } from "@/lib/data/responses";
 import { getRuntimeAppSettings } from "@/lib/data/settings";
 import { logger } from "@/lib/logger";
-import { getInterviewer } from "@/lib/data/interviewers";
-import { isCandidateEligibleForInterview } from "@/lib/data/responses";
-import { getInterviewById } from "@/lib/data/interviews";
 import { NextResponse } from "next/server";
 
 /**
@@ -57,11 +57,18 @@ export async function POST(req: Request) {
   logger.info("register-call request received");
 
   const runtimeSettings = getRuntimeAppSettings();
-  const apiKey = runtimeSettings.apiKey;
-  if (!apiKey) {
-    logger.error("register-call: QWEN_API_KEY 未配置");
+  const realtimeApiKey = runtimeSettings.realtimeApiKey;
+  if (!realtimeApiKey) {
+    logger.error("register-call: 实时语音 API Key 未配置");
     return NextResponse.json(
-      { error: "服务端未配置 QWEN_API_KEY，无法开始语音面试" },
+      { error: "服务端未配置实时语音 API Key，无法开始语音面试" },
+      { status: 500 },
+    );
+  }
+  if (!runtimeSettings.realtimeWsUrl) {
+    logger.error("register-call: 实时语音 WebSocket 地址未配置");
+    return NextResponse.json(
+      { error: "服务端未配置实时语音 WebSocket 地址，无法开始语音面试" },
       { status: 500 },
     );
   }
@@ -85,8 +92,14 @@ export async function POST(req: Request) {
         { status: 409 },
       );
     }
-    if (requestedData.email && !isCandidateEligibleForInterview(body.interview_id, requestedData.email)) {
-      return NextResponse.json({ error: "该邮箱已完成面试，或不在本次面试邀请范围内。" }, { status: 409 });
+    if (
+      requestedData.email &&
+      !isCandidateEligibleForInterview(body.interview_id, requestedData.email)
+    ) {
+      return NextResponse.json(
+        { error: "该邮箱已完成面试，或不在本次面试邀请范围内。" },
+        { status: 409 },
+      );
     }
   }
 
@@ -154,8 +167,8 @@ export async function POST(req: Request) {
   return NextResponse.json(
     {
       callId: existingCallId || `call_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`,
-      wsUrl: REALTIME_WS_BASE,
-      apiKey,
+      wsUrl: runtimeSettings.realtimeWsUrl || REALTIME_WS_BASE,
+      apiKey: realtimeApiKey,
       model,
       voice,
       instructions,
@@ -165,7 +178,9 @@ export async function POST(req: Request) {
         modalities: ["text", "audio"],
         input_audio_format: "pcm",
         output_audio_format: "pcm",
-        input_audio_transcription: { model: REALTIME_ASR_MODEL },
+        input_audio_transcription: {
+          model: runtimeSettings.asrModel || REALTIME_ASR_MODEL,
+        },
         turn_detection: {
           type: "server_vad",
           threshold: 0.5,
