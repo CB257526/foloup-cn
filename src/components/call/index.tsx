@@ -41,6 +41,7 @@ import {
   CheckCircleIcon,
   Loader2,
   Mic,
+  X,
   XCircleIcon,
 } from "lucide-react";
 import Image from "next/image";
@@ -217,6 +218,46 @@ function DebugMetric({ label, value }: { label: string; value: string | number }
     <div className="rounded border border-slate-200 bg-white px-2 py-1">
       <span className="text-slate-500">{label}</span>
       <strong className="ml-1 text-slate-800">{value}</strong>
+    </div>
+  );
+}
+
+/**
+ * 监考提醒条（黄色横幅）。
+ *
+ * 🔴 为什么要给候选人一个「收起当前这条」的按钮：
+ *   这些提醒是**持续显示**的 —— 只有下一次画面分析明确返回 `clear` 时才会自动清空，
+ *   一旦出现就会一直挂在页面上（手机端窄屏更挡内容），而候选人此前没有任何收起它的手段。
+ *
+ * ⚠️ 关闭按钮只收起这条**提示文案**，不改变任何监考行为：
+ *   截图仍按间隔采集、风险事件仍上报、strike 计数与上限判定仍在服务端照常累加；
+ *   下一次分析若再判定出风险事件，提醒会重新出现。
+ */
+function ProctorNotice({
+  text,
+  onDismiss,
+  className = "",
+}: {
+  text: string;
+  onDismiss: () => void;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-normal leading-6 text-amber-900 ${className}`}
+    >
+      {/* 用 <output> 承载 status 语义（它本身就是 role="status"），
+          关闭按钮放在它外面 —— 按钮不该被当成状态播报内容的一部分。 */}
+      <output className="min-w-0 flex-1 [overflow-wrap:anywhere]">{text}</output>
+      <button
+        type="button"
+        aria-label="收起这条提醒"
+        title="收起"
+        onClick={onDismiss}
+        className="-mt-0.5 -mr-1 shrink-0 rounded p-1 text-amber-700 transition-colors hover:bg-amber-100 hover:text-amber-900"
+      >
+        <X className="h-4 w-4" aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -522,9 +563,23 @@ function Call({ interview, candidate }: CallProps) {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error("当前浏览器不支持摄像头，请使用 HTTPS 页面或更新浏览器。");
       }
+      /**
+       * 🔴 必须显式指定 `facingMode`：手机浏览器在未指定朝向时按平台默认选择摄像头，
+       *    Android / iOS 的默认都是**后置**（environment）摄像头 —— 候选人拿到的会是拍环境的那个，
+       *    监考截图里只有对面的墙，看不到人脸。
+       *
+       * 用 `{ ideal: "user" }` 而不是 `"user"`：`"user"` 是**强制**约束，
+       *    设备若没有前置摄像头会直接抛 `OverconstrainedError`，导致候选人根本开不了摄像头；
+       *    `ideal` 是「优先前置，没有则回落后置」，在手机上（都有前置）效果相同，但不会硬失败。
+       */
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 5, max: 10 } },
+        video: {
+          facingMode: { ideal: "user" },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 5, max: 10 },
+        },
       });
       cameraStreamRef.current = stream;
       setCameraStream(stream);
@@ -1160,12 +1215,11 @@ function Call({ interview, candidate }: CallProps) {
             {!isStarted && !isEnded && !isOldUser && (
               <div className="mx-auto mt-3 w-[calc(100%-1.5rem)] min-w-0 max-w-3xl rounded-2xl border border-indigo-200 bg-slate-50 p-3 shadow-sm sm:mt-5 sm:w-[calc(100%-2.5rem)] sm:p-5">
                 {proctorNotice && (
-                  <p
-                    role="status"
-                    className="mb-3 rounded-lg bg-amber-50 p-3 text-sm font-normal leading-6 text-amber-900"
-                  >
-                    {proctorNotice}
-                  </p>
+                  <ProctorNotice
+                    text={proctorNotice}
+                    onDismiss={() => setProctorNotice("")}
+                    className="mb-3"
+                  />
                 )}
                 <div className="min-w-0">
                   {interview?.logo_url && (
@@ -1325,12 +1379,11 @@ function Call({ interview, candidate }: CallProps) {
             {isStarted && !isEnded && !isOldUser && (
               <>
                 {proctorNotice && (
-                  <div
-                    role="status"
-                    className="mx-auto my-2 max-w-xl rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-normal text-amber-900"
-                  >
-                    {proctorNotice}
-                  </div>
+                  <ProctorNotice
+                    text={proctorNotice}
+                    onDismiss={() => setProctorNotice("")}
+                    className="mx-auto my-2 max-w-xl"
+                  />
                 )}
                 <div className="flex flex-row items-center justify-center gap-3 text-xs font-normal text-gray-500">
                   <span
