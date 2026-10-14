@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // 生产部署用 standalone 产物：只需 .next/standalone + static + public 即可运行，
+  // 镜像体积与内存占用都明显更小（Dockerfile.prod 依赖此配置）。
+  // 本地 `yarn dev` / `yarn start` 不受影响。
+  output: "standalone",
   experimental: {
     serverActions: {
       // 简历 PDF 经由 Server Action 上传（src/actions/parse-pdf.ts）。

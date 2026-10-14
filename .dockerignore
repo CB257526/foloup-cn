@@ -1,0 +1,30 @@
+# 构建上下文排除清单
+# 关键：必须排除本地 node_modules —— 否则 COPY . . 会用 macOS/arm64 的
+# 原生模块（better-sqlite3/sharp 的 .node）覆盖容器里为 linux/amd64 装好的那套，
+# 镜像构建会成功但运行时直接崩。
+node_modules
+.next
+out
+build
+
+# 版本控制与编辑器
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# 本地数据与密钥（绝不进镜像）
+data
+proctoring
+.env
+.env.*
+!.env.example
+
+# 日志与缓存
+*.log
+yarn-error.log
+npm-debug.log
+*.tsbuildinfo
+.cache
+.DS_Store

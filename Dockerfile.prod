@@ -1,0 +1,69 @@
+# ══════════════════════════════════════════════════════════════════════
+#  AI 面试系统（FoloUp 国内化）生产镜像
+#  目标平台： linux/amd64（服务器为 x86_64）
+#  产物形态： Next.js standalone（体积小、启动快、内存低）
+#  构建方式： docker buildx build --platform linux/amd64 -f Dockerfile.prod .
+# ══════════════════════════════════════════════════════════════════════
+
+# 基础镜像可用 ARG 覆盖：国内环境直连 Docker Hub（auth.docker.io）常不通，
+# 通过镜像站构建示例：
+#   --build-arg BASE_IMAGE=docker.1ms.run/library/node:22-bookworm-slim
+ARG BASE_IMAGE=node:22-bookworm-slim
+
+FROM ${BASE_IMAGE} AS base
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# ─────────────── ① 依赖安装 ───────────────
+FROM base AS deps
+# better-sqlite3 / sharp 优先使用预编译二进制；万一取不到会退化为源码编译，
+# 因此这里备好编译链（只存在于构建阶段，不会进入最终镜像）。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY package.json yarn.lock ./
+RUN yarn install --frozen-lockfile --network-timeout 600000
+
+# ─────────────── ② 构建应用 ───────────────
+FROM base AS builder
+# ⚠️ NEXT_PUBLIC_* 会被 Next.js 在【构建期】内联进产物，必须在构建时给定最终访问地址，
+#    否则候选人链接 / metadata 里会残留 http://localhost:3000。
+ARG NEXT_PUBLIC_SITE_URL=http://localhost:3000
+ARG NEXT_PUBLIC_LIVE_URL=http://localhost:3000
+ARG NEXT_PUBLIC_DATA_RETENTION_MONTHS=6
+ARG NEXT_PUBLIC_PRIVACY_CONTACT_EMAIL=
+ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
+    NEXT_PUBLIC_LIVE_URL=$NEXT_PUBLIC_LIVE_URL \
+    NEXT_PUBLIC_DATA_RETENTION_MONTHS=$NEXT_PUBLIC_DATA_RETENTION_MONTHS \
+    NEXT_PUBLIC_PRIVACY_CONTACT_EMAIL=$NEXT_PUBLIC_PRIVACY_CONTACT_EMAIL
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN yarn build
+
+# ─────────────── ③ 运行时镜像 ───────────────
+FROM base AS runner
+ENV NODE_ENV=production \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+
+RUN groupadd --system --gid 1001 nodejs \
+ && adduser --system --uid 1001 --ingroup nodejs --home /app --no-create-home nextjs
+
+# standalone 产物：server.js + 被追踪到的 node_modules（含 better-sqlite3 原生模块）
+COPY --from=builder --chown=1001:1001 /app/.next/standalone ./
+COPY --from=builder --chown=1001:1001 /app/.next/static ./.next/static
+COPY --from=builder --chown=1001:1001 /app/public ./public
+
+# SQLite 数据库、加密密钥（settings.key / resume-data.key）、监考截图都落在这里，
+# 由 compose 挂载持久卷覆盖。镜像内先建好并交给非 root 用户，避免运行时权限报错。
+RUN mkdir -p /app/data /app/data/proctoring && chown -R 1001:1001 /app/data
+
+USER 1001
+EXPOSE 3000
+
+# 用 node 自身做健康检查，避免为了 curl 而增大镜像
+HEALTHCHECK --interval=30s --timeout=6s --start-period=25s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["node", "server.js"]

@@ -1,5 +1,6 @@
 "use client";
 
+import { createConsentRecordAction } from "@/app/actions/call-sessions";
 import Call from "@/components/call";
 import LoaderWithText from "@/components/loaders/loader-with-text/loaderWithText";
 import { CandidateService } from "@/services/candidates.service";
@@ -12,7 +13,6 @@ import { use, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { primeAudioOnFirstGesture } from "./audio-unlock";
 import { type ConsentRecord, readConsent, saveConsent } from "./consent";
-import { createConsentRecordAction } from "@/app/actions/call-sessions";
 import { ConsentGate } from "./consent-gate";
 import "./candidate-shell.css";
 
@@ -203,7 +203,7 @@ function InterviewInterface({ params }: Props) {
 
   return (
     <div className="candidate-shell">
-      <div className="p-3 sm:p-5 md:p-8 mx-auto form-container">
+      <div className="mx-auto min-w-0 max-w-6xl p-3 sm:p-5 md:p-8 form-container">
         {!interview ? (
           interviewNotFound ? (
             <PopUpMessage
@@ -247,33 +247,37 @@ function InterviewInterface({ params }: Props) {
         ) : consentState === "unknown" ? (
           <PopupLoader />
         ) : (
-          <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
+          <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-4">
             {candidate && (
-              <section className="rounded-xl border border-indigo-100 bg-white p-4 shadow-sm sm:p-6">
+              <section className="min-w-0 overflow-hidden rounded-xl border border-indigo-100 bg-white p-4 shadow-sm sm:p-6">
                 <p className="text-xs font-semibold tracking-wide text-indigo-600">
                   候选人专属面试
                 </p>
-                <h1 className="mt-1 text-xl font-semibold text-slate-900">{candidate.name}</h1>
-                <p className="mt-1 text-sm text-slate-600">{candidate.email}</p>
-                <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-lg bg-slate-50 p-3">
+                <h1 className="mt-1 break-words text-xl font-semibold text-slate-900">
+                  {candidate.name}
+                </h1>
+                <p className="mt-1 break-all text-sm text-slate-600">{candidate.email}</p>
+                <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-2">
+                  <div className="min-w-0 rounded-lg bg-slate-50 p-3">
                     <p className="text-xs font-medium text-slate-500">本场岗位</p>
-                    <p className="mt-1 text-sm font-semibold text-slate-800">{interview.name}</p>
+                    <p className="mt-1 break-words text-sm font-semibold text-slate-800">
+                      {interview.name}
+                    </p>
                   </div>
-                  <div className="rounded-lg bg-slate-50 p-3">
+                  <div className="min-w-0 rounded-lg bg-slate-50 p-3">
                     <p className="text-xs font-medium text-slate-500">已准备的简历</p>
-                    <p className="mt-1 flex items-center gap-2 text-sm font-semibold text-slate-800">
+                    <p className="mt-1 flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-800">
                       <span aria-hidden="true">📄</span>
-                      {candidate.resume_file_name}
+                      <span className="break-words">{candidate.resume_file_name}</span>
                     </p>
                   </div>
                 </div>
                 {candidate.candidate_description && (
-                  <p className="mt-4 whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                  <p className="mt-4 max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words pr-2 text-sm leading-6 text-slate-600">
                     {candidate.candidate_description}
                   </p>
                 )}
-                <p className="mt-3 text-xs text-slate-500">
+                <p className="mt-3 break-words text-xs text-slate-500">
                   这条链接仅属于你；页面不会展示其他候选人的资料。
                 </p>
               </section>

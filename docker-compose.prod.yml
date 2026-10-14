@@ -1,0 +1,48 @@
+# ══════════════════════════════════════════════════════════════════
+#  AI 面试系统（FoloUp 国内化）—— 生产编排
+#  用法（服务器上，镜像与配置就绪后）：
+#     docker compose -f docker-compose.yml up -d
+#     查看日志： docker compose logs -f foloup
+#     停止：     docker compose down
+#
+#  要点：
+#   · 单容器：Next.js standalone + SQLite 同进程，无额外中间件
+#   · SQLite 库 / 加密密钥 / 监考截图 全部落 ./data，由 bind mount 持久化
+#     ⇒ 备份 = 直接复制 ./data 目录
+#   · 80 端口对外；后续接入域名时在它前面加一层 Caddy 做 HTTPS 即可
+# ══════════════════════════════════════════════════════════════════
+services:
+  foloup:
+    image: foloup-cn:latest
+    container_name: foloup-app
+    ports:
+      - "80:3000"
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      # 数据库与监考截图都放在挂载卷里；密钥文件（settings.key / resume-data.key）
+      # 也生成在同一目录，因此这个卷必须持久化，否则重评简历会解不开
+      SQLITE_DB_PATH: /app/data/foloup.db
+      PROCTORING_STORAGE_DIR: /app/data/proctoring
+      NEXT_TELEMETRY_DISABLED: "1"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 25s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

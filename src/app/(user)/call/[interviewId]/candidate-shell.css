@@ -70,3 +70,27 @@
     overflow-x: hidden;
   }
 }
+
+/* 长岗位说明和结束页都必须在候选人页面自己的内容轨道内收缩，不能把外层卡片撑破。 */
+.candidate-shell,
+.candidate-shell * {
+  box-sizing: border-box;
+}
+
+.candidate-shell {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.candidate-call-shell {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.candidate-call-shell img,
+.candidate-call-shell video,
+.candidate-call-shell canvas {
+  max-width: 100%;
+}

@@ -169,13 +169,17 @@ function PermissionCard({
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3 text-left shadow-sm">
       <div className="flex items-start gap-3">
-        <div className={`rounded-lg p-2 ${ready ? "bg-emerald-50 text-emerald-600" : "bg-indigo-50 text-indigo-600"}`}>
+        <div
+          className={`rounded-lg p-2 ${ready ? "bg-emerald-50 text-emerald-600" : "bg-indigo-50 text-indigo-600"}`}
+        >
           {icon}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <p className="font-semibold text-slate-800">{title}</p>
-            <span className={`shrink-0 text-xs font-semibold ${ready ? "text-emerald-600" : unavailable ? "text-slate-400" : "text-amber-600"}`}>
+            <span
+              className={`shrink-0 text-xs font-semibold ${ready ? "text-emerald-600" : unavailable ? "text-slate-400" : "text-amber-600"}`}
+            >
               {ready && <CheckCircleIcon className="mr-1 inline-block" size={14} />}
               {permissionStateText(state)}
             </span>
@@ -189,7 +193,13 @@ function PermissionCard({
             className="mt-3 inline-flex h-9 items-center justify-center rounded-lg border border-indigo-200 px-3 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {requesting && <Loader2 className="mr-1.5 animate-spin" size={15} />}
-            {ready ? "已完成授权" : requesting ? "请求中" : state === "failed" ? "重新授权" : actionLabel}
+            {ready
+              ? "已完成授权"
+              : requesting
+                ? "请求中"
+                : state === "failed"
+                  ? "重新授权"
+                  : actionLabel}
           </button>
         </div>
       </div>
@@ -199,7 +209,7 @@ function PermissionCard({
 
 function readVoiceDebug(): VoiceDebugSnapshot {
   if (typeof window === "undefined") return {};
-  return ((window as unknown as { __voiceDebug?: VoiceDebugSnapshot }).__voiceDebug ?? {});
+  return (window as unknown as { __voiceDebug?: VoiceDebugSnapshot }).__voiceDebug ?? {};
 }
 
 function DebugMetric({ label, value }: { label: string; value: string | number }) {
@@ -352,24 +362,25 @@ function Call({ interview, candidate }: CallProps) {
 
   useEffect(() => {
     if (!voiceDebugEnabled) return;
-    const observer = "PerformanceObserver" in window
-      ? new PerformanceObserver((list) => {
-          for (const entry of list.getEntries()) {
-            const duration = Number(entry.duration.toFixed(1));
-            proctorDebugRef.current.longTaskCount += 1;
-            proctorDebugRef.current.maxLongTaskMs = Math.max(
-              proctorDebugRef.current.maxLongTaskMs,
-              duration,
-            );
-            appendRealtimeDebugEvent({
-              atMs: Number(performance.now().toFixed(1)),
-              type: "long_task",
-              valueMs: duration,
-              detail: `主线程长任务 ${duration.toFixed(1)}ms`,
-            });
-          }
-        })
-      : null;
+    const observer =
+      "PerformanceObserver" in window
+        ? new PerformanceObserver((list) => {
+            for (const entry of list.getEntries()) {
+              const duration = Number(entry.duration.toFixed(1));
+              proctorDebugRef.current.longTaskCount += 1;
+              proctorDebugRef.current.maxLongTaskMs = Math.max(
+                proctorDebugRef.current.maxLongTaskMs,
+                duration,
+              );
+              appendRealtimeDebugEvent({
+                atMs: Number(performance.now().toFixed(1)),
+                type: "long_task",
+                valueMs: duration,
+                detail: `主线程长任务 ${duration.toFixed(1)}ms`,
+              });
+            }
+          })
+        : null;
     try {
       observer?.observe({ type: "longtask", buffered: true });
     } catch {
@@ -533,7 +544,8 @@ function Call({ interview, candidate }: CallProps) {
   };
 
   const requestMicrophonePermission = async () => {
-    if (Loading || microphonePermission === "requesting" || microphonePermission === "granted") return;
+    if (Loading || microphonePermission === "requesting" || microphonePermission === "granted")
+      return;
     setMicrophonePermission("requesting");
     setMicrophonePermissionError("");
     microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -587,7 +599,10 @@ function Call({ interview, candidate }: CallProps) {
       const canvas = captureCanvasRef.current || document.createElement("canvas");
       captureCanvasRef.current = canvas;
       const targetWidth = Math.min(640, video.videoWidth);
-      const targetHeight = Math.max(1, Math.round((video.videoHeight / video.videoWidth) * targetWidth));
+      const targetHeight = Math.max(
+        1,
+        Math.round((video.videoHeight / video.videoWidth) * targetWidth),
+      );
       canvas.width = targetWidth;
       canvas.height = targetHeight;
       const context = canvas.getContext("2d", { alpha: false });
@@ -639,7 +654,9 @@ function Call({ interview, candidate }: CallProps) {
       };
       if (result.event && result.strikeCount) {
         const label = PROCTOR_EVENT_TEXT[result.event.type] || "监考风险";
-        setProctorNotice(`监考提醒 ${result.strikeCount}/${result.maxStrikes ?? 3}：${label}。${result.event.summary}`);
+        setProctorNotice(
+          `监考提醒 ${result.strikeCount}/${result.maxStrikes ?? 3}：${label}。${result.event.summary}`,
+        );
         toast.warning(`监考提醒 ${result.strikeCount}/${result.maxStrikes ?? 3}`, {
           description: `${label}：${result.event.summary}`,
           duration: 8000,
@@ -648,7 +665,9 @@ function Call({ interview, candidate }: CallProps) {
         setProctorNotice("");
       }
       if ((result.consecutiveFailures ?? 0) === 3) {
-        setProctorNotice("视觉分析暂不可用，截图已保存，面试会继续进行，相关记录将由招聘人员人工复核。");
+        setProctorNotice(
+          "视觉分析暂不可用，截图已保存，面试会继续进行，相关记录将由招聘人员人工复核。",
+        );
       }
       if (result.terminated) {
         setProctorNotice("累计监考风险事件已达到上限，本场面试已结束。");
@@ -669,14 +688,20 @@ function Call({ interview, candidate }: CallProps) {
       }
       proctorDebugRef.current.failureCount += 1;
       if (statusCode !== 429) {
-        console.error("摄像头截图分析失败：", error instanceof Error ? error.message : String(error));
+        console.error(
+          "摄像头截图分析失败：",
+          error instanceof Error ? error.message : String(error),
+        );
         setProctorNotice("摄像头截图暂时无法分析，面试会继续进行；请保持摄像头开启。");
       }
     } finally {
       if (uploadStartedAt > 0) {
         const uploadMs = Number((performance.now() - uploadStartedAt).toFixed(1));
         proctorDebugRef.current.lastUploadMs = uploadMs;
-        proctorDebugRef.current.maxUploadMs = Math.max(proctorDebugRef.current.maxUploadMs, uploadMs);
+        proctorDebugRef.current.maxUploadMs = Math.max(
+          proctorDebugRef.current.maxUploadMs,
+          uploadMs,
+        );
         appendRealtimeDebugEvent({
           atMs: Number(performance.now().toFixed(1)),
           type: "screenshot_upload",
@@ -794,9 +819,11 @@ function Call({ interview, candidate }: CallProps) {
         client?.stop();
 
         // 评分异步触发，候选人结束页不等待模型调用；get-call 自身有服务端幂等领取。
-        void axios.post("/api/get-call", { id: callId, token: analysisTokenRef.current }).catch((error) => {
-          console.error("触发 AI 评分失败：", error);
-        });
+        void axios
+          .post("/api/get-call", { id: callId, token: analysisTokenRef.current })
+          .catch((error) => {
+            console.error("触发 AI 评分失败：", error);
+          });
       } catch (error) {
         // 服务端拒绝或保存失败时保持实时连接，允许候选人校正状态后再次提交。
         endedRef.current = false;
@@ -820,11 +847,13 @@ function Call({ interview, candidate }: CallProps) {
       return;
     }
     if (
-      (proctoringEnabled && !cameraStreamRef.current?.getVideoTracks().some((track) => track.readyState === "live")) ||
-      (!useTestAudioRef.current && !microphoneStreamRef.current?.getAudioTracks().some((track) => track.readyState === "live"))
+      (proctoringEnabled &&
+        !cameraStreamRef.current?.getVideoTracks().some((track) => track.readyState === "live")) ||
+      (!useTestAudioRef.current &&
+        !microphoneStreamRef.current?.getAudioTracks().some((track) => track.readyState === "live"))
     ) {
-      setCameraPermission((state) => proctoringEnabled ? "failed" : state);
-      setMicrophonePermission((state) => useTestAudioRef.current ? state : "failed");
+      setCameraPermission((state) => (proctoringEnabled ? "failed" : state));
+      setMicrophonePermission((state) => (useTestAudioRef.current ? state : "failed"));
       toast.error("摄像头或麦克风连接已中断，请重新授权后再开始。");
       return;
     }
@@ -833,10 +862,12 @@ function Call({ interview, candidate }: CallProps) {
     try {
       const eligibility = candidate
         ? { eligible: true }
-        : (await axios.post<{ eligible: boolean }>("/api/check-eligibility", {
-            interviewId: interview.id,
-            email: useEmail,
-          })).data;
+        : (
+            await axios.post<{ eligible: boolean }>("/api/check-eligibility", {
+              interviewId: interview.id,
+              email: useEmail,
+            })
+          ).data;
       const isIneligible = !eligibility.eligible;
 
       if (isIneligible) {
@@ -876,7 +907,9 @@ function Call({ interview, candidate }: CallProps) {
       const cfg = registered.data;
 
       if (!cfg?.callId || !cfg?.apiKey) {
-        throw new Error("服务端未返回有效的会话参数（请确认系统设置中的实时语音地址和 API 密钥已配置）");
+        throw new Error(
+          "服务端未返回有效的会话参数（请确认系统设置中的实时语音地址和 API 密钥已配置）",
+        );
       }
 
       // ② 建立实时语音会话（浏览器直连平台 WebSocket）。只有 start 成功返回后，
@@ -1000,11 +1033,26 @@ function Call({ interview, candidate }: CallProps) {
       ? `${STATUS_TEXT[status]}${statusDetail ? `：${statusDetail}` : ""}`
       : STATUS_TEXT[status];
 
+  const isSetupState = !isStarted && !isEnded && !isOldUser;
+  const isCompletionState = isEnded || isOldUser;
+
   return (
-    <div className="flex justify-center items-center min-h-screen bg-gray-100">
+    <div className="flex min-h-[100dvh] w-full items-start justify-center overflow-x-hidden bg-gray-100 p-3 sm:p-5 md:items-center">
       {isStarted && <TabSwitchWarning />}
-      <div className={cameraStream && isStarted && !isEnded ? "fixed bottom-4 right-4 z-30 w-36 overflow-hidden rounded-xl border-2 border-indigo-300 bg-white shadow-lg sm:w-48" : "hidden"}>
-        <video ref={proctorVideoRef} autoPlay muted playsInline className="aspect-video w-full object-cover" />
+      <div
+        className={
+          cameraStream && isStarted && !isEnded
+            ? "fixed bottom-4 right-4 z-30 w-36 overflow-hidden rounded-xl border-2 border-indigo-300 bg-white shadow-lg sm:w-48"
+            : "hidden"
+        }
+      >
+        <video
+          ref={proctorVideoRef}
+          autoPlay
+          muted
+          playsInline
+          className="aspect-video w-full object-cover"
+        />
         <p className="px-2 py-1 text-center text-xs font-medium text-slate-700">摄像头监考已开启</p>
       </div>
       {voiceDebugEnabled && (isStarted || isEnded) && (
@@ -1029,40 +1077,69 @@ function Call({ interview, candidate }: CallProps) {
             </button>
           </div>
           <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-            <DebugMetric label="音频分片间隔" value={`${voiceDebug.voice?.lastAudioDeltaGapMs ?? "-"} ms`} />
-            <DebugMetric label="最大分片间隔" value={`${voiceDebug.voice?.audioDeltaGapMaxMs ?? "-"} ms`} />
-            <DebugMetric label=">150ms 间隔" value={voiceDebug.voice?.audioDeltaGapOver150MsCount ?? "-"} />
-            <DebugMetric label="当前播放余量" value={`${voiceDebug.voice?.currentQueueMs ?? "-"} ms`} />
+            <DebugMetric
+              label="音频分片间隔"
+              value={`${voiceDebug.voice?.lastAudioDeltaGapMs ?? "-"} ms`}
+            />
+            <DebugMetric
+              label="最大分片间隔"
+              value={`${voiceDebug.voice?.audioDeltaGapMaxMs ?? "-"} ms`}
+            />
+            <DebugMetric
+              label=">150ms 间隔"
+              value={voiceDebug.voice?.audioDeltaGapOver150MsCount ?? "-"}
+            />
+            <DebugMetric
+              label="当前播放余量"
+              value={`${voiceDebug.voice?.currentQueueMs ?? "-"} ms`}
+            />
             <DebugMetric label="最小播放余量" value={`${voiceDebug.voice?.minQueueMs ?? "-"} ms`} />
             <DebugMetric label="疑似断档" value={voiceDebug.voice?.queueUnderrunCount ?? "-"} />
-            <DebugMetric label="VAD 播放中断" value={voiceDebug.voice?.speechStartedWhilePlayingCount ?? "-"} />
+            <DebugMetric
+              label="VAD 播放中断"
+              value={voiceDebug.voice?.speechStartedWhilePlayingCount ?? "-"}
+            />
             <DebugMetric label="长任务次数" value={voiceDebug.proctor?.longTaskCount ?? "-"} />
             <DebugMetric label="截图编码" value={`${voiceDebug.proctor?.lastEncodeMs ?? "-"} ms`} />
             <DebugMetric label="截图绘制" value={`${voiceDebug.proctor?.lastDrawMs ?? "-"} ms`} />
-            <DebugMetric label="最长任务" value={`${voiceDebug.proctor?.maxLongTaskMs ?? "-"} ms`} />
+            <DebugMetric
+              label="最长任务"
+              value={`${voiceDebug.proctor?.maxLongTaskMs ?? "-"} ms`}
+            />
             <DebugMetric label="截图上传" value={`${voiceDebug.proctor?.lastUploadMs ?? "-"} ms`} />
           </div>
           <p className="mt-2 text-[11px] text-amber-800">
-            重点观察：卡顿时播放余量是否接近 0、分片间隔是否超过 150ms、是否同时出现长任务或截图编码尖峰。
+            重点观察：卡顿时播放余量是否接近 0、分片间隔是否超过
+            150ms、是否同时出现长任务或截图编码尖峰。
           </p>
         </div>
       )}
-      <div className="bg-white rounded-md md:w-[80%] w-[90%]">
-        <Card className="h-[88vh] rounded-lg border-2 border-b-4 border-r-4 border-black text-xl font-bold transition-all  md:block dark:border-white ">
+      <div className="w-full min-w-0 max-w-5xl">
+        <Card
+          className={`w-full min-w-0 text-xl font-bold transition-all ${
+            isCompletionState
+              ? "overflow-visible border-0 bg-transparent shadow-none"
+              : `overflow-y-auto rounded-lg border-2 border-b-4 border-r-4 border-black dark:border-white ${
+                  isSetupState
+                    ? "max-h-[calc(100dvh-1.5rem)] min-h-[calc(100dvh-1.5rem)]"
+                    : "min-h-[calc(100dvh-1.5rem)]"
+                }`
+          }`}
+        >
           <div>
-            <div className="m-4 h-[15px] rounded-lg border-[1px]  border-black">
-              <div
-                className=" bg-indigo-600 h-[15px] rounded-lg"
-                style={{ width: isEnded ? "100%" : `${progress}%` }}
-              />
-            </div>
-            <CardHeader className="items-center p-1">
-              {!isEnded && (
+            {!isCompletionState && (
+              <div className="m-4 h-[15px] rounded-lg border-[1px] border-black">
+                <div
+                  className="h-[15px] rounded-lg bg-indigo-600"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+            )}
+            {!isCompletionState && (
+              <CardHeader className="items-center p-1">
                 <CardTitle className="flex flex-row items-center text-lg md:text-xl font-bold mb-2">
                   {interview?.name}
                 </CardTitle>
-              )}
-              {!isEnded && (
                 <div className="flex mt-2 flex-row">
                   <AlarmClockIcon
                     className="text-indigo-600 h-[1rem] w-[1rem] rotate-0 scale-100  dark:-rotate-90 dark:scale-0 mr-2 font-bold"
@@ -1076,14 +1153,21 @@ function Call({ interview, candidate }: CallProps) {
                     以内
                   </div>
                 </div>
-              )}
-            </CardHeader>
+              </CardHeader>
+            )}
 
             {/* ─────────── 开始页 ─────────── */}
             {!isStarted && !isEnded && !isOldUser && (
-              <div className="w-[calc(100%-1rem)] max-w-[560px] min-w-0 mx-auto mt-2 border border-indigo-200 rounded-md p-2 m-2 bg-slate-50">
-                {proctorNotice && <p role="status" className="mb-3 rounded-lg bg-amber-50 p-3 text-sm font-normal text-amber-900">{proctorNotice}</p>}
-                <div>
+              <div className="mx-auto mt-3 w-[calc(100%-1.5rem)] min-w-0 max-w-3xl rounded-2xl border border-indigo-200 bg-slate-50 p-3 shadow-sm sm:mt-5 sm:w-[calc(100%-2.5rem)] sm:p-5">
+                {proctorNotice && (
+                  <p
+                    role="status"
+                    className="mb-3 rounded-lg bg-amber-50 p-3 text-sm font-normal leading-6 text-amber-900"
+                  >
+                    {proctorNotice}
+                  </p>
+                )}
+                <div className="min-w-0">
                   {interview?.logo_url && (
                     <div className="p-1 flex justify-center">
                       <Image
@@ -1095,17 +1179,26 @@ function Call({ interview, candidate }: CallProps) {
                       />
                     </div>
                   )}
-                  <div className="p-2 font-normal text-sm mb-4 whitespace-pre-line">
-                    {interview?.description}
-                    <p className="font-bold text-sm">
-                      {"\n"}请分别完成下方的摄像头和麦克风授权。建议佩戴耳机，并尽量在安静的环境下进行。
-                      {"\n\n"}注意：切换浏览器标签页会被记录。
-                    </p>
+                  <div className="mb-4 min-w-0 rounded-xl border border-indigo-100 bg-white p-3 font-normal sm:p-4">
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <h2 className="text-base font-semibold text-slate-900">岗位说明</h2>
+                      <span className="shrink-0 text-xs font-medium text-slate-400">
+                        请滚动阅读
+                      </span>
+                    </div>
+                    <div className="max-h-[min(42vh,28rem)] overflow-y-auto overscroll-contain pr-2 text-sm leading-7 text-slate-700 [overflow-wrap:anywhere] whitespace-pre-wrap">
+                      {interview?.description || "本场面试将围绕岗位要求和你的个人经历展开。"}
+                    </div>
+                    <div className="mt-3 border-t border-indigo-100 pt-3 text-sm font-semibold leading-6 text-slate-800">
+                      请分别完成下方的摄像头和麦克风授权。建议佩戴耳机，并尽量在安静的环境下进行。
+                      <br />
+                      <span className="text-slate-600">注意：切换浏览器标签页会被记录。</span>
+                    </div>
                   </div>
                   {candidate ? (
-                    <div className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-left text-sm">
+                    <div className="min-w-0 rounded-lg border border-indigo-100 bg-white px-3 py-2 text-left text-sm">
                       <p className="font-medium text-slate-800">本场候选人：{candidate.name}</p>
-                      <p className="mt-0.5 text-slate-500">{candidate.email}</p>
+                      <p className="mt-0.5 break-all text-slate-500">{candidate.email}</p>
                       <p className="mt-1 text-xs text-slate-400">
                         此链接已绑定该候选人，无需再次填写个人信息。
                       </p>
@@ -1166,12 +1259,14 @@ function Call({ interview, candidate }: CallProps) {
                       playsInline
                       className="aspect-video max-h-48 w-full object-cover"
                     />
-                    <p className="px-3 py-2 text-center text-xs font-normal text-white">摄像头预览正常，面试时会继续保持开启</p>
+                    <p className="px-3 py-2 text-center text-xs font-normal text-white">
+                      摄像头预览正常，面试时会继续保持开启
+                    </p>
                   </div>
                 )}
-                <div className="w-[80%] flex flex-row mx-auto justify-center items-center align-middle">
+                <div className="mx-auto flex w-full flex-wrap items-center justify-center gap-2 pt-2">
                   <Button
-                    className="min-w-20 h-10 rounded-lg flex flex-row justify-center mb-8"
+                    className="h-10 min-w-28 rounded-lg"
                     style={{
                       backgroundColor: interview.theme_color ?? "#4F46E5",
                       color: isLightColor(interview.theme_color ?? "#4F46E5") ? "black" : "white",
@@ -1184,20 +1279,28 @@ function Call({ interview, candidate }: CallProps) {
                     }
                     onClick={() => startConversationRef.current?.()}
                   >
-                    {!Loading ? (mediaPermissionsReady ? "开始面试" : "请先完成设备授权") : <MiniLoader />}
+                    {!Loading ? (
+                      mediaPermissionsReady ? (
+                        "开始面试"
+                      ) : (
+                        "请先完成设备授权"
+                      )
+                    ) : (
+                      <MiniLoader />
+                    )}
                   </Button>
                   <AlertDialog>
                     {/* asChild：避免 AlertDialogTrigger 再套一层 button（原版会产生 button 嵌套 button 的水合警告） */}
                     <AlertDialogTrigger asChild>
                       <Button
-                        className="bg-white border ml-2 text-black min-w-15 h-10 rounded-lg flex flex-row justify-center mb-8"
+                        className="h-10 min-w-20 border bg-white text-black"
                         style={{ borderColor: interview.theme_color }}
                         disabled={Loading}
                       >
                         退出
                       </Button>
                     </AlertDialogTrigger>
-                    <AlertDialogContent>
+                    <AlertDialogContent className="max-h-[min(90dvh,42rem)] max-w-lg overflow-y-auto p-0">
                       <AlertDialogHeader>
                         <AlertDialogTitle>确定要退出吗？</AlertDialogTitle>
                       </AlertDialogHeader>
@@ -1221,7 +1324,14 @@ function Call({ interview, candidate }: CallProps) {
             {/* ─────────── 通话中 ─────────── */}
             {isStarted && !isEnded && !isOldUser && (
               <>
-                {proctorNotice && <div role="status" className="mx-auto my-2 max-w-xl rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-normal text-amber-900">{proctorNotice}</div>}
+                {proctorNotice && (
+                  <div
+                    role="status"
+                    className="mx-auto my-2 max-w-xl rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-normal text-amber-900"
+                  >
+                    {proctorNotice}
+                  </div>
+                )}
                 <div className="flex flex-row items-center justify-center gap-3 text-xs font-normal text-gray-500">
                   <span
                     className={`inline-block h-2 w-2 rounded-full ${
@@ -1333,28 +1443,27 @@ function Call({ interview, candidate }: CallProps) {
 
             {/* ─────────── 结束页 ─────────── */}
             {isEnded && !isOldUser && (
-              <div className="w-[calc(100%-2rem)] max-w-[400px] min-w-0 mx-auto mt-2 border border-indigo-200 rounded-md p-2 m-2 bg-slate-50 absolute -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2">
-                <div>
-                  <div className="p-2 font-normal text-base mb-4 whitespace-pre-line">
-                    <CheckCircleIcon className="h-[2rem] w-[2rem] mx-auto my-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0 text-indigo-500 " />
-                    <p className="text-lg font-semibold text-center">
+              <div className="mx-auto w-full max-w-xl px-1 py-3 sm:px-4 sm:py-5">
+                <div className="w-full min-w-0 rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm sm:p-6">
+                  <div className="font-normal text-base">
+                    <CheckCircleIcon className="mx-auto my-4 h-8 w-8 text-indigo-500" />
+                    <p className="text-center text-lg font-semibold text-slate-900">
                       {isStarted ? "感谢你参加本次面试" : "感谢你的关注。"}
                     </p>
-                    <p className="text-center">
-                      {"\n"}
+                    <p className="mt-2 text-center text-sm leading-6 text-slate-600">
                       现在可以关闭这个页面了。
                     </p>
                     {finalSession && (
-                      <div className="mt-4 border-t border-indigo-100 pt-3 text-center text-sm font-normal">
-                        <p>
+                      <div className="mt-5 grid gap-3 border-t border-indigo-100 pt-4 text-sm font-normal sm:grid-cols-2">
+                        <p className="rounded-lg bg-slate-50 p-3 text-center text-slate-600">
                           服务端记录时长：
-                          <span className="font-semibold">
+                          <span className="font-semibold text-slate-900">
                             {formatDuration(finalSession.serverDuration ?? 0)}
                           </span>
                         </p>
-                        <p className="mt-1">
+                        <p className="rounded-lg bg-slate-50 p-3 text-center text-slate-600">
                           结束原因：
-                          <span className="font-semibold">
+                          <span className="font-semibold text-slate-900">
                             {END_REASON_TEXT[finalSession.endReason]}
                           </span>
                         </p>
@@ -1372,7 +1481,13 @@ function Call({ interview, candidate }: CallProps) {
                           填写反馈
                         </Button>
                       </AlertDialogTrigger>
-                      <AlertDialogContent>
+                      <AlertDialogContent className="max-h-[min(90dvh,42rem)] max-w-lg overflow-y-auto p-0">
+                        <AlertDialogHeader className="border-b border-indigo-100 px-5 py-4 text-left">
+                          <AlertDialogTitle>填写面试反馈</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            你的反馈只用于改进面试体验，不会影响本次面试结果。
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
                         <FeedbackForm email={email} onSubmit={handleFeedbackSubmit} />
                       </AlertDialogContent>
                     </AlertDialog>
@@ -1383,15 +1498,14 @@ function Call({ interview, candidate }: CallProps) {
 
             {/* ─────────── 不可参加 ─────────── */}
             {isOldUser && (
-              <div className="w-[calc(100%-2rem)] max-w-[400px] min-w-0 mx-auto mt-2 border border-indigo-200 rounded-md p-2 m-2 bg-slate-50 absolute -translate-x-1/2 -translate-y-1/2 top-1/2 left-1/2">
-                <div>
-                  <div className="p-2 font-normal text-base mb-4 whitespace-pre-line">
-                    <CheckCircleIcon className="h-[2rem] w-[2rem] mx-auto my-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0 text-indigo-500 " />
-                    <p className="text-lg font-semibold text-center">
+              <div className="mx-auto w-full max-w-xl px-1 py-3 sm:px-4 sm:py-5">
+                <div className="w-full min-w-0 rounded-2xl border border-indigo-200 bg-white p-4 shadow-sm sm:p-6">
+                  <div className="text-base font-normal leading-7">
+                    <CheckCircleIcon className="mx-auto my-4 h-8 w-8 text-indigo-500" />
+                    <p className="text-center text-lg font-semibold text-slate-900">
                       你已完成本次面试，或不在本次面试的邀请名单内。感谢你的关注！
                     </p>
-                    <p className="text-center">
-                      {"\n"}
+                    <p className="mt-2 text-center text-sm text-slate-600">
                       现在可以关闭这个页面了。
                     </p>
                   </div>
