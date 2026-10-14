@@ -127,6 +127,18 @@ export type SessionConfig = {
   greeting?: string;
   /** 服务端下发的会话参数，原样透传 */
   session?: Record<string, unknown>;
+  /**
+   * 回声防护（默认开启）：AI 正在外放音频时暂停上传麦克风数据。
+   *
+   * 为什么必须这么做：手机外放时，麦克风会把 AI 自己的声音收回去，
+   * 服务端 VAD 把它当成"候选人开始说话"，配合 `interrupt_response: true`
+   * **把 AI 刚说到一半的回复直接掐断**。实测后果是——
+   *   · 候选人几乎听不到 AI 的完整发言（听感上就是"没声音"）
+   *   · AI 永远只说得出半句，被打断后又从开场白重新念，形成死循环
+   * 代价：AI 说话期间无法"打断"它（真人面试里也基本不需要）。
+   * 若哪天确定候选人戴了耳机、要恢复可打断能力，把它设为 false 即可。
+   */
+  echoGuard?: boolean;
 };
 
 export type ClientCallbacks = {
@@ -249,6 +261,18 @@ export class RealtimeVoiceClient {
   private lastAudioDeltaAt = 0;
   private audioDeltaGapTotalMs = 0;
 
+  /* ── 回声防护（见 SessionConfig.echoGuard 的说明）── */
+  /** 音频队列播完后，再多闭麦这么久（覆盖扬声器的余响） */
+  private static readonly ECHO_GUARD_TAIL_MS = 400;
+  /** 单次连续闭麦的上限，防止异常情况下永久静音 */
+  private static readonly ECHO_GUARD_MAX_MS = 20000;
+  private echoGuardEnabled = true;
+  private inputGatedUntil = 0;
+  private gateStartedAt = 0;
+  private gateActive = false;
+  /** 因回声防护而丢弃的音频帧数（诊断用） */
+  private gatedFrames = 0;
+
   private stats: RealtimeStats = {
     latency_samples: [],
     interruption_count: 0,
@@ -275,6 +299,11 @@ export class RealtimeVoiceClient {
   ): Promise<void> {
     this.stop();
     this.cfg = cfg;
+    this.echoGuardEnabled = cfg.echoGuard !== false;
+    this.inputGatedUntil = 0;
+    this.gateStartedAt = 0;
+    this.gateActive = false;
+    this.gatedFrames = 0;
     this.turns = [];
     this.startedAt = Date.now();
     this.speechStoppedAt = 0;
@@ -507,6 +536,40 @@ export class RealtimeVoiceClient {
     ctx.createMediaStreamSource(stream).connect(worklet);
   }
 
+  /**
+   * 判断此刻是否应该「闭麦」（不上传麦克风数据）。
+   *
+   * 规则：只要 AI 还有音频排在播放队列里（或刚播完不到 ECHO_GUARD_TAIL_MS），
+   *      就认为扬声器正在出声，此时上传麦克风等于把自己的声音喂回给自己。
+   */
+  private shouldGateInput(): boolean {
+    if (!this.echoGuardEnabled) {
+      return false;
+    }
+    const ctx = this.outCtx;
+    const queueMs = ctx ? Math.max(0, (this.playCursor - ctx.currentTime) * 1000) : 0;
+    const now = performance.now();
+
+    if (queueMs > 0) {
+      if (!this.gateActive) {
+        this.gateActive = true;
+        this.gateStartedAt = now;
+      }
+      this.inputGatedUntil = now + queueMs + RealtimeVoiceClient.ECHO_GUARD_TAIL_MS;
+    }
+
+    if (!this.gateActive || now >= this.inputGatedUntil) {
+      this.gateActive = false;
+      return false;
+    }
+    // 安全阀：闭麦超过上限就强制放开，避免异常情况下候选人一直说不上话
+    if (now - this.gateStartedAt > RealtimeVoiceClient.ECHO_GUARD_MAX_MS) {
+      this.gateActive = false;
+      return false;
+    }
+    return true;
+  }
+
   private onFrame(raw: Float32Array): void {
     if (!this.micCtx) {
       return;
@@ -522,6 +585,13 @@ export class RealtimeVoiceClient {
     }
     const rms = count ? Math.sqrt(sum / count) : 0;
     this.cb.onLevel?.(rms);
+
+    // 回声防护：AI 正在说话时不上传，避免被自己的声音打断（见 SessionConfig.echoGuard）
+    if (this.shouldGateInput()) {
+      this.gatedFrames++;
+      this.publishDebug(false);
+      return;
+    }
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       const i16 = f32ToI16(f32);
@@ -844,6 +914,7 @@ export class RealtimeVoiceClient {
       interruptions: this.stats.interruption_count,
       events: this.stats.events,
       latencies: this.stats.latency_samples,
+      echoGuard: { enabled: this.echoGuardEnabled, gatedFrames: this.gatedFrames, active: this.gateActive },
       latencyAvg: this.stats.latency_samples.length
         ? this.stats.latency_samples.reduce((a, b) => a + b, 0) / this.stats.latency_samples.length
         : 0,
