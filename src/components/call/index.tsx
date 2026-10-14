@@ -1,6 +1,7 @@
 "use client";
 
 import { FeedbackForm } from "@/components/call/feedbackForm";
+import { ConversationPanel } from "@/components/call/conversationPanel";
 import {
   type RealtimeStatus,
   RealtimeVoiceClient,
@@ -329,6 +330,8 @@ function Call({ interview, candidate }: CallProps) {
   const [statusDetail, setStatusDetail] = useState<string>("");
   const [speaker, setSpeaker] = useState<"agent" | "user" | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
+  /** 小屏（xl 以下）的对话记录抽屉是否打开；桌面端是常驻侧栏，不用这个 */
+  const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
   const [level, setLevel] = useState(0);
   const [latency, setLatency] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -1092,7 +1095,7 @@ function Call({ interview, candidate }: CallProps) {
   const isCompletionState = isEnded || isOldUser;
 
   return (
-    <div className="flex min-h-[100dvh] w-full items-start justify-center overflow-x-hidden bg-gray-100 p-3 sm:p-5 md:items-center">
+    <div className="flex min-h-[100dvh] w-full items-start justify-center gap-4 overflow-x-hidden bg-gray-100 p-3 sm:p-5 md:items-center xl:max-w-[94rem]">
       {isStarted && <TabSwitchWarning />}
       <div
         className={
@@ -1169,7 +1172,8 @@ function Call({ interview, candidate }: CallProps) {
           </p>
         </div>
       )}
-      <div className="w-full min-w-0 max-w-5xl">
+      {/* 主区域（对话记录侧栏是它的兄弟节点，见文件末尾） */}
+      <div className="w-full min-w-0 max-w-5xl xl:flex-1">
         <Card
           className={`w-full min-w-0 text-xl font-bold transition-all ${
             isCompletionState
@@ -1409,7 +1413,9 @@ function Call({ interview, candidate }: CallProps) {
                 <div className="flex flex-col md:flex-row p-2 grow">
                   <div className="border-x-2 border-grey w-full md:w-[50%] my-auto min-h-[35%] md:min-h-[70%]">
                     <div className="flex flex-col justify-evenly">
-                      <div className="text-base w-[90%] md:w-[80%] md:text-[26px] mt-4 min-h-[140px] md:min-h-[250px] mx-auto px-3 md:px-6">
+                      {/* ⚠️ 行高必须显式写：`md:text-[26px]` 只给 font-size，
+                          会继承外层 Card 的 1.75rem 行高 ⇒ 26px 的字只有 28px 行高，上下两行会挨在一起 */}
+                      <div className="text-base font-normal leading-7 md:text-[26px] md:leading-10 whitespace-pre-wrap [overflow-wrap:anywhere] w-[90%] md:w-[80%] mt-4 min-h-[140px] md:min-h-[250px] mx-auto px-3 md:px-6">
                         {lastInterviewerResponse}
                       </div>
                       <div className="flex flex-col mx-auto justify-center items-center align-middle">
@@ -1436,7 +1442,7 @@ function Call({ interview, candidate }: CallProps) {
                   <div className="flex flex-col justify-evenly w-full md:w-[50%]">
                     <div
                       ref={lastUserResponseRef}
-                      className="text-base w-[90%] md:w-[80%] md:text-[26px] mt-4 mx-auto h-[140px] md:h-[250px] px-3 md:px-6 overflow-y-auto"
+                      className="text-base font-normal leading-7 md:text-[26px] md:leading-10 whitespace-pre-wrap [overflow-wrap:anywhere] w-[90%] md:w-[80%] mt-4 mx-auto h-[140px] md:h-[250px] px-3 md:px-6 overflow-y-auto"
                     >
                       {lastUserResponse}
                     </div>
@@ -1455,6 +1461,17 @@ function Call({ interview, candidate }: CallProps) {
                       <div className="font-semibold">你</div>
                     </div>
                   </div>
+                </div>
+
+                {/* 小屏：打开完整对话记录抽屉（桌面端由右侧常驻侧栏承担） */}
+                <div className="mb-2 flex justify-center px-2 xl:hidden">
+                  <Button
+                    type="button"
+                    className="h-10 w-full max-w-sm border-2 border-black bg-white text-sm font-normal leading-6 text-slate-800 hover:bg-slate-50"
+                    onClick={() => setIsTranscriptOpen(true)}
+                  >
+                    查看完整对话记录（{turns.length} 句）
+                  </Button>
                 </div>
               </>
             )}
@@ -1582,6 +1599,30 @@ function Call({ interview, candidate }: CallProps) {
           <ArrowUpRightSquareIcon className="h-[1.5rem] w-[1.5rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0 text-indigo-500 " />
         </a>
       </div>
+
+      {/* 桌面端（xl 及以上）：常驻的实时对话记录侧栏 */}
+      {isStarted && !isEnded && !isOldUser && (
+        <ConversationPanel
+          turns={turns}
+          className="sticky top-5 hidden max-h-[calc(100dvh-2.5rem)] w-80 shrink-0 self-start xl:flex"
+        />
+      )}
+
+      {/* 小屏：对话记录抽屉（点遮罩关闭） */}
+      {isStarted && !isEnded && !isOldUser && isTranscriptOpen && (
+        <div
+          className="fixed inset-0 z-50 flex justify-end bg-black/40 xl:hidden"
+          onClick={() => setIsTranscriptOpen(false)}
+        >
+          <div className="h-full w-[min(90vw,24rem)]" onClick={(event) => event.stopPropagation()}>
+            <ConversationPanel
+              turns={turns}
+              onClose={() => setIsTranscriptOpen(false)}
+              className="h-full rounded-none border-y-0 border-r-0"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
